@@ -13,5 +13,5 @@ all: $(shell echo test* | sed -E "s/([^\.]*)(\.*)([^\ ]*)\b/\1/g")
 test_%: test_%.o %.o $(INCLUDES)
 	$(CC) -g $^ -o $@
 clean: 
-	rm -f *.o .*.swp
+	rm -f *.o .*.swp test_DynamicArray test_MinHeap
 
