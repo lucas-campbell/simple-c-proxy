@@ -1,5 +1,8 @@
 test_MinHeap
 test_DynamicArray
+proxy
+tcpserver
+tcpclient
 
 # Vim
 *.swp

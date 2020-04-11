@@ -1,0 +1,5 @@
+google.com
+http://www.cs.tufts.edu/comp/112/index.html
+http://www.cs.cmu.edu/~prs/bio.html
+http://www.cs.cmu.edu/~dga/dga-headshot.jpg
+http://students.tufts.edu/student-affairs/student-code-conduct/academic-integrity-resources
