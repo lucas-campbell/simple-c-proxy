@@ -6,7 +6,7 @@ import subprocess
 portno = 9110
 
 # each file is a subcategory of cases
-tests = ['file1.txt']
+tests = ['simple.txt']
 passed = []
 failed = []
 num_cases = 0
