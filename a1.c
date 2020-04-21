@@ -103,35 +103,55 @@ void error(char *msg) {
  * childfd: file descriptor for communicating with the client
  * 
  */
-void connect_loop(int childfd, char *server_hostname, int server_portno)
+void connect_loop(int childfd, char *server_hostname, int server_portno,
+                  struct addrinfo hints)
 {
+    struct addrinfo *result, *rp;
     (void)childfd;
     (void)server_hostname;
     (void)server_portno;
     // open a socket for connection with desired target
-    int serverfd = socket(AF_INET, SOCK_STREAM, 0);
-    // connect to the desired resource
-    if (serverfd < 0) 
-        error("ERROR opening socket");
+    int serverfd; //will be for comms with server
+    int n_write, n_read, total_bytes_read;
+    bool connection_open;
 
-    //struct hostent *srv_hostent = gethostbyname(server_hostname);
-    //extern_serverp = gethostbyname(server_hostname);
-    //if (extern_serverp == NULL) {
-    //    fprintf(stderr,"ERROR, no such host as %s\n", server_hostname);
-    //    exit(0);
-    //}
-    //struct sockaddr_in server_addr = {0};
-    //server_addr.sin_family = AF_INET; //IPV4
-    //
-    //// copies binary IP addr
-    //bcopy((char *)extern_serverp->h_addr, 
-    //      (char *)&extern_serveraddr.sin_addr.s_addr, extern_serverp->h_length);
-    //extern_serveraddr.sin_port = htons(server_portno);
-    //if (connect(serverfd, (struct sockaddr *)&extern_serveraddr, sizeof(extern_serveraddr)) < 0) 
-    //  error("ERROR connecting during CONNECT");
-    //else {
-    //    //TODO send some HTTP 200 response back to client
-    //}
+    /* Set up connection using desired host/port */
+    char srv_portno[6]; //maximum of 65,535 ports
+    memset(srv_portno, 0, 6);
+    sprintf(srv_portno, "%d", server_portno); //adds null
+    int s = getaddrinfo(server_hostname, srv_portno, &hints, &result);
+    if (s != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        exit(EXIT_FAILURE);
+    }
+    /* getaddrinfo() returns a list of address structures.
+      Try each address until we successfully connect(2).
+      If socket(2) (or connect(2)) fails, we (close the socket
+      and) try the next address. */
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        serverfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (serverfd == -1)
+            continue;
+        if (connect(serverfd, rp->ai_addr, rp->ai_addrlen) != -1)
+            break;                  /* Success */
+        close(serverfd);
+    }
+    if (rp == NULL) {               /* No address succeeded */
+        fprintf(stderr, "Could not connect during CONNECT\n");
+        exit(EXIT_FAILURE);
+    }
+    freeaddrinfo(result);           /* No longer needed */
+
+    //TODO send some HTTP 200 response back to client
+    char *success = "HTTP/1.1 200 OK\r\n";
+    char *msg_buf = malloc(sizeof(START_BUFSIZE));
+    memcpy(msg_buf, success, strlen(success));
+    msg_buf[strlen(success)] = '\0';
+    n_write = write(childfd, msg_buf, strlen(msg_buf));
+    if (n_write == -1) {
+        //TODO fail some other way
+        error("Writing to client failed:");
+    }
 
     // loop of:
     //   1) read from client
@@ -140,15 +160,33 @@ void connect_loop(int childfd, char *server_hostname, int server_portno)
     //   4) send to client
     // with error checking & seeing if connexn closed/etc
 
+    connection_open = true;
+    while (connection_open) {
+        //while (n_read > 
+        total_bytes_read = 0;
+        n_read = read(childfd, msg_buf+total_bytes_read, 1);
+        if (n_read < 0)
+            error("ERROR reading from socket");
+        if (n_read == 0) {
+            connection_open = false;
+            //TODO close connection with server
+            continue;
+        }
+        total_bytes_read += n_read;
+
+    }
+
 }
 
-// Returns a KV_Pair_T with hash_val field populated. Does NOT malloc space for
-// the kvp->val struct member, but does malloc space for struct KV_Pair_T
-// Also sets hostname and portno according to info in buf, and defaults portno
-// to 80.
-unsigned long parse_request(char *buf, int len, char **hostname, int *portno,
-                            bool *connect_request)
+//
+// Sets hostname and portno according to info in buf, and defaults portno
+// to 80. Also sets hash_val to a unique hash value according to a combination
+// of the resource, host, and port requested (if doing a GET request).
+// Return values: 0 indicates GET request, 1 is CONNECT. -1 indicates error.
+int parse_request(char *buf, int len, char **hostname, int *portno,
+                  unsigned long *hash_val)
 {
+    int ret = 0;
     int major, minor; //HTTP version
     char tokens[len];
     char *line, *resource;
@@ -161,13 +199,12 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno,
     //***NOTE***: only bother scanning until \r bc strtok replaces \n with \0
     // Also, "resource" var here has null char placed @ end by sscanf
     if (sscanf(line, "GET %s HTTP/%d.%d\r", resource, &major, &minor) != 3) {
-        if (sscanf(line, "CONNECT %s HTTP/%d.%d\r", resource, &major, &minor)
-                == 3) {
-            *connect_request = true;
+        if (sscanf(line, "CONNECT %s HTTP/%d.%d\r", resource, &major, &minor) == 3) {
+            ret = 1;
         }
         else {
-        fprintf(stderr, "Error with first line of GET Request\n%s\n", tokens);
-        exit(-1);
+            fprintf(stderr, "Error with first line of GET Request\n%s\n", tokens);
+            ret = -1;
         }
     }
 
@@ -196,39 +233,41 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno,
         }
         line = strtok(NULL, "\n");
     }
-    #if DEBUG
+#if DEBUG
     printf("parsed %s request: %s\n", connect_request?"CONNECT":"GET", buf);
     if (*hostname != NULL)
         printf("Got host: %s, set portno to %d\n", *hostname, *portno);
-    #endif
+#endif
     
-    // create hash based on hostname + resource (+port)
-    int to_hash_len = strlen(resource); //ok bc sscanf adds null char
-    char ascii_portno[6]; //maximum of 65,535 ports
-    memset(ascii_portno, 0, 6);
-    if (*hostname != NULL) {
-        to_hash_len += strlen(*hostname); //sscanf adds null
+    // Don't care about hashing for connect requests, since results are not
+    // cacheable
+    if (ret == 0) {
+        /* create hash based on hostname + resource (+port) */
+        int to_hash_len = strlen(resource); //ok bc sscanf adds null char
+        char ascii_portno[6]; //maximum of 65,535 ports
+        memset(ascii_portno, 0, 6);
+        if (*hostname != NULL) {
+            to_hash_len += strlen(*hostname); //sscanf adds null
+        }
+        sprintf(ascii_portno, "%d", *portno); //adds null
+        to_hash_len += strlen(ascii_portno);
+        char to_hash[to_hash_len];
+        //Order of hashed string: resource, hostname, port num     
+        // resource
+        memcpy(to_hash, resource, strlen(resource));
+        if (*hostname != NULL) {
+            // hostname
+            memcpy(to_hash+(strlen(resource)), *hostname, strlen(*hostname));
+            // portno
+            memcpy(to_hash+(strlen(resource)+strlen(*hostname)-1),
+                    ascii_portno, strlen(ascii_portno));
+        }
+        *hash_val = hash((unsigned char *)to_hash, to_hash_len);
     }
-
-    sprintf(ascii_portno, "%d", *portno); //adds null
-    to_hash_len += strlen(ascii_portno);
-
-    char to_hash[to_hash_len];
-    //Order of hashed string: resource, hostname, port num     
-    // resource
-    memcpy(to_hash, resource, strlen(resource));
-    if (*hostname != NULL) {
-        // hostname
-        memcpy(to_hash+(strlen(resource)), *hostname, strlen(*hostname));
-        // portno
-        memcpy(to_hash+(strlen(resource)+strlen(*hostname)-1),
-                ascii_portno, strlen(ascii_portno));
-    }
-    unsigned long hash_val = hash((unsigned char *)to_hash, to_hash_len);
 
     check_and_free(resource);
 
-    return hash_val;
+    return ret;
 }
 
 /*
@@ -435,9 +474,9 @@ void Cache_put(Cache_T cache, KV_Pair_T kv)
     for (int i = 0; i < capacity; i++) {
         //check stale
         if (curr_time > kvps[i]->expiration_date) {
-            #if DEBUG
+#if DEBUG
 	    fprintf(stderr, "stale\n");
-	    #endif
+#endif
             free(kvps[i]->val->object);
             free(kvps[i]->val);
             free(kvps[i]);
@@ -594,13 +633,13 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
                         bool *content_present)
 {
     //Read a byte from stream
-    #if DEBUG
+#if DEBUG
     printf("about to httpread\n");
-    #endif
+#endif
     *n_read = read(childfd, (*buf)+(*total_bytes_read), 1);
-    #if DEBUG
+#if DEBUG
     printf("done httpread\n");
-    #endif
+#endif
     *total_bytes_read += *n_read; 
     *c = (*buf)[(*total_bytes_read)-1];
     if (*n_read < 0) 
@@ -609,12 +648,12 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
         *done = true;
         return;
     }
-    #if DEBUG
+#if DEBUG
     printf("server received %d bytes, last byte received: %x,"
         "curr buffer: %s\n", *n_read, (*buf)[*total_bytes_read-1], *buf);
     printf("curr_bufsize: %d, total_bytes_read: %d\n\n", *curr_bufsize, *total_bytes_read);
     printf("content_present: %d, content_length: %d, header: %d\n", *content_present, *content_length, *num_header_bytes);
-    #endif
+#endif
     // May need to expand buffer if especially long GET request
     if (*total_bytes_read == *curr_bufsize) {
         *curr_bufsize = 2*(*curr_bufsize);
@@ -640,9 +679,9 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
             //Prev line indicated that message contains a body/payload
             *content_present = true;
         }
-        #if DEBUG
+#if DEBUG
         printf("Looked for Content-Length in: %s\n",(*buf)+(*prev_newline_index)+1);
-        #endif
+#endif
         *prev_newline_index = *total_bytes_read-1;
     }
     if (*total_bytes_read == *num_header_bytes + *content_length &&
@@ -759,9 +798,9 @@ int main(int argc, char *argv[])
         memset(client_hostname, 0, sizeof(client_hostname));
         memset(client_servicename, 0, sizeof(client_servicename));
         //memset(&clientaddr, 0, clientlen);
-        #if DEBUG
+#if DEBUG
         fprintf(stderr, "Before getnameinfo\n");
-        #endif
+#endif
         int name_info = getnameinfo((struct sockaddr *)&clientaddr, clientlen, client_hostname,
                     sizeof(client_hostname), client_servicename,
                     sizeof(client_servicename), 0);
@@ -772,19 +811,19 @@ int main(int argc, char *argv[])
             else
                 gai_strerror(name_info);
         }
-        #if DEBUG
+#if DEBUG
         fprintf(stderr, "getnameinfo returned: %d\n", name_info);
-        #endif
+#endif
         //if (client_hostp == NULL)
         //    //error("ERROR on gethostbyaddr");
         //    herror("ERROR on gethostbyaddr");
         hostaddrp = inet_ntoa(clientaddr.sin_addr);
         if (hostaddrp == NULL)
             error("ERROR on inet_ntoa\n");
-        #if DEBUG
+#if DEBUG
         printf("server established connection with %s (%s)\n", 
                 client_hostname, hostaddrp);
-        #endif
+#endif
         
         /* 
          * read: read input string from the client
@@ -805,31 +844,24 @@ int main(int argc, char *argv[])
                                 &content_present);
         }
 
-        server_portno = -1;
-        extern_hostname = NULL;
-        bool connect_request = false;
         // Once we have full buffer, analyze it and create connection with
         // desired server or report back an error
         // create partially filled request struct to insert into table
-        #if DEBUG
+#if DEBUG
         printf("HTTP_LOOP done, parsing buffer now\n");
-        #endif
-        unsigned long hash_val = parse_request(buf, total_bytes_read,
-                                        &extern_hostname, &server_portno,
-                                        &connect_request);
-        // if serving a connect request, enter separate loop and continue
-        // indefinitely through there
-        // TODO
-        if (connect_request) {
-            connect_loop(childfd, extern_hostname, server_portno);
-        //    check_and_free(extern_hostname);
-        //    check_and_free(buf);
-        //    close_connections(...);
-        //    continue;
+#endif
+        server_portno = -1;
+        extern_hostname = NULL;
+        int ret = 0;
+        unsigned long hash_val = 0;
+        ret = parse_request(buf, total_bytes_read,
+                            &extern_hostname, &server_portno, &hash_val);
+        if (ret == -1) {
+            check_and_free(extern_hostname);
+            check_and_free(buf);
+            close(childfd);
+            continue;
         }
-        
-        //printf("DONE parsing request. Hostname: %s, portno: %d\n",
-                //extern_hostname, server_portno);
 
         // If no hostname supplied, close & wait for new connection
         if (extern_hostname == NULL) {
@@ -840,6 +872,23 @@ int main(int argc, char *argv[])
             continue;
         }
 
+#if DEBUG
+        printf("DONE parsing request. Hostname: %s, portno: %d\n",
+                extern_hostname, server_portno);
+#endif
+
+        // if serving a connect request, enter separate loop and continue
+        // indefinitely through there
+        // TODO
+        if (ret == 1) {
+            connect_loop(childfd, extern_hostname, server_portno, hints);
+            check_and_free(extern_hostname);
+            check_and_free(buf);
+            //close_connections(...);
+            continue;
+        }
+        
+
         // Check with Cache_get(cache, key_hash) if ya existe an entry
         KV_Pair_T response = Cache_get(cache, hash_val);
         //  if ya existe:
@@ -849,24 +898,7 @@ int main(int argc, char *argv[])
         }
         //  else get fresh one (set up connxn w/server)
         else {
-            // Set up connection using desired host/port
-            /*
-            sockfd = socket(AF_INET, SOCK_STREAM, 0);
-            if (sockfd < 0) 
-                error("ERROR opening socket");
-            extern_serverp = gethostbyname(extern_hostname);
-            if (extern_serverp == NULL) {
-                fprintf(stderr,"ERROR, no such host as %s\n", extern_hostname);
-                exit(0);
-            }
-            bzero((char *) &extern_serveraddr, sizeof(extern_serveraddr));
-            extern_serveraddr.sin_family = AF_INET;
-            bcopy((char *)extern_serverp->h_addr, 
-                  (char *)&extern_serveraddr.sin_addr.s_addr, extern_serverp->h_length);
-            extern_serveraddr.sin_port = htons(server_portno);
-            if (connect(sockfd, (struct sockaddr *)&extern_serveraddr, sizeof(extern_serveraddr)) < 0) 
-              error("ERROR connecting during GET");
-              */
+            /* Set up connection using desired host/port */
             char srv_portno[6]; //maximum of 65,535 ports
             memset(srv_portno, 0, 6);
             sprintf(srv_portno, "%d", server_portno); //adds null
@@ -879,35 +911,30 @@ int main(int argc, char *argv[])
               Try each address until we successfully connect(2).
               If socket(2) (or connect(2)) fails, we (close the socket
               and) try the next address. */
-
             for (rp = result; rp != NULL; rp = rp->ai_next) {
                 sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
                 if (sockfd == -1)
                     continue;
-
                 if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
                     break;                  /* Success */
-
                 close(sockfd);
             }
-
             if (rp == NULL) {               /* No address succeeded */
-                fprintf(stderr, "Could not connect\n");
+                fprintf(stderr, "Could not connect during GET\n");
                 exit(EXIT_FAILURE);
             }
-
             freeaddrinfo(result);           /* No longer needed */
 
             //Write the GET request ourselves to the server
             n_write = write(sockfd, buf, total_bytes_read);
             (void)n_write;
-            //printf("wrote %d bytes to client\n", n_write);
-            //printf("CL: %d, pnli: %d, header_bytes: %d, content_present: %d\n",
-            //        content_length, prev_newline_index, num_header_bytes, content_present);
+
+            /* Now, reading back response from requested server */
 
             //zero out the buffer before reading back from external server
             bzero(buf, total_bytes_read);
-            total_bytes_read = prev_newline_index = content_length = num_header_bytes = 0;
+            total_bytes_read = prev_newline_index =
+                    content_length = num_header_bytes = 0;
             done = check_newline = content_present = false;
             // Read until have received entire request
             while (!done) {
