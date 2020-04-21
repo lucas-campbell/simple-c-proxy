@@ -1,5 +1,18 @@
 1. look @ case of given invalid host or port number -- what return?
     - e.g. portno over 65535 -- would handle in parse_request, near line 150
+
 2. Replace exit() calls with just error messages, then clean up (memory, reset 
         vars, etc) and keep going
-3. 
+    - parse_request()
+    - 
+
+3. takes of line 755 of closing connection when no hostname provided. need to 
+    fwd and probably get back error code 400 instead (?). But also,
+    getting the hostname from a url sounds hard.
+    - make sure any edits ALSO set the default portno to 80
+
+4. add logic in parse_request() to differentiate btwn absolute and authority
+    forms of the URI (According to RFC 7230#Host, when a proxy receives the
+    absolute-form it is supposed to ignore the Host header and just parse the
+    URI for the host (and then replace the Host header). Also, make sure that
+    all CONNECT request honly have the authorit-form of the URI

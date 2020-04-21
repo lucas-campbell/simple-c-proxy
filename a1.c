@@ -23,6 +23,8 @@
 #include <arpa/inet.h>
 
 #define START_BUFSIZE 100
+#define START_CACHE_SIZE 10
+
 ////////// Struct Definitions //////////
 typedef struct Val_T {
     size_t header_size;
@@ -90,11 +92,55 @@ void error(char *msg) {
   exit(1);
 } 
 
+/*
+ * https://tools.ietf.org/html/rfc7231#section-4.3.6
+ * loop for HTTP CONNECT method
+ * Runs a loop that acts a blind tunnel for traffic between the client and 
+ * requested resource. Responses from the server are not cached. Once the
+ * connection is closed by either end, proxy will attempt to send outstanding
+ * data from closed side to other side, then closes both connexns & returns.
+ * 
+ * childfd: file descriptor for communicating with the client
+ * 
+ */
+void connect_loop(int childfd, ...)
+{
+    // open a socket for connection with desired target
+    // int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    // connect to the desired resource
+    /* if (sockfd < 0) 
+                error("ERROR opening socket");
+            extern_serverp = gethostbyname(extern_hostname);
+            if (extern_serverp == NULL) {
+                fprintf(stderr,"ERROR, no such host as %s\n", extern_hostname);
+                exit(0);
+            }
+            bzero((char *) &extern_serveraddr, sizeof(extern_serveraddr));
+            extern_serveraddr.sin_family = AF_INET;
+            bcopy((char *)extern_serverp->h_addr, 
+                  (char *)&extern_serveraddr.sin_addr.s_addr, extern_serverp->h_length);
+            extern_serveraddr.sin_port = htons(server_portno);
+            if (connect(sockfd, (struct sockaddr *)&extern_serveraddr, sizeof(extern_serveraddr)) < 0) 
+              error("ERROR connecting during CONNECT");
+            else {
+                //TODO send some HTTP 200 response back to client
+            }
+    */
+    // loop of:
+    //   1) read from client
+    //   2) send to server
+    //   3) read from server
+    //   4) send to client
+    // with error checking & seeing if connexn closed/etc
+
+}
+
 // Returns a KV_Pair_T with hash_val field populated. Does NOT malloc space for
 // the kvp->val struct member, but does malloc space for struct KV_Pair_T
 // Also sets hostname and portno according to info in buf, and defaults portno
 // to 80.
-unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
+unsigned long parse_request(char *buf, int len, char **hostname, int *portno,
+                            bool *connect_request)
 {
     int major, minor; //HTTP version
     char tokens[len];
@@ -108,8 +154,14 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
     //***NOTE***: only bother scanning until \r bc strtok replaces \n with \0
     // Also, "resource" var here has null char placed @ end by sscanf
     if (sscanf(line, "GET %s HTTP/%d.%d\r", resource, &major, &minor) != 3) {
+        if (sscanf(line, "CONNECT %s HTTP/%d.%d\r", resource, &major, &minor)
+                == 3) {
+            *connect_request = true;
+        }
+        else {
         fprintf(stderr, "Error with first line of GET Request\n%s\n", tokens);
         exit(-1);
+        }
     }
 
     while (line != NULL) {
@@ -138,7 +190,9 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
         line = strtok(NULL, "\n");
     }
     #if DEBUG
-    printf("parsed request for hostname\n");
+    printf("parsed %s request: %s\n", connect_request?"CONNECT":"GET", buf);
+    if (*hostname != NULL)
+        printf("Got host: %s, set portno to %d\n", *hostname, *portno);
     #endif
     
     // create hash based on hostname + resource (+port)
@@ -148,28 +202,22 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
     if (*hostname != NULL) {
         to_hash_len += strlen(*hostname); //sscanf adds null
     }
-    // portno may have been specified in 'Host:' header field
-    //if (*portno != -1) {
-        sprintf(ascii_portno, "%d", *portno); //adds null
-        to_hash_len += strlen(ascii_portno);
-    //}
-    //else { //we set it ourselves to 80 already, so no need to sprintf
-    //    ascii_portno[0] = '8';
-    //    ascii_portno[1] = '0';
-    //    ascii_portno[2] = '\0';
-    //}
+
+    sprintf(ascii_portno, "%d", *portno); //adds null
+    to_hash_len += strlen(ascii_portno);
 
     char to_hash[to_hash_len];
     //Order of hashed string: resource, hostname, port num     
+    // resource
     memcpy(to_hash, resource, strlen(resource));
     if (*hostname != NULL) {
+        // hostname
         memcpy(to_hash+(strlen(resource)), *hostname, strlen(*hostname));
-        //if (*portno != -1)
-            memcpy(to_hash+(strlen(resource)+strlen(*hostname)-1),
-                    ascii_portno, strlen(ascii_portno));
+        // portno
+        memcpy(to_hash+(strlen(resource)+strlen(*hostname)-1),
+                ascii_portno, strlen(ascii_portno));
     }
-    unsigned long hash_val = hash(to_hash, to_hash_len);
-    //printf("hash: %lu\n", hash_val);
+    unsigned long hash_val = hash((unsigned char *)to_hash, to_hash_len);
 
     check_and_free(resource);
 
@@ -241,7 +289,8 @@ int send_response(int sockfd, KV_Pair_T response)
     }
 
     struct tm zero_secs = {0};
-    struct tm one_secs = {1,0,};
+    struct tm one_secs = {0};
+    one_secs.tm_sec = 1;
     time_t zero = mktime(&zero_secs);
     time_t one = mktime(&one_secs);
     // should be 1 anyways, but trying to be portableish
@@ -281,32 +330,34 @@ int send_response(int sockfd, KV_Pair_T response)
                 to_send+header_size, content_len);
     }
 
-    int n_write = write(sockfd, msg, header_size+content_len+strlen(ascii_age));
-    if (n_write != header_size+content_len+strlen(ascii_age)) {
+    ssize_t n_write = write(sockfd, msg, header_size+content_len+strlen(ascii_age));
+    if (n_write != header_size+content_len+(int)strlen(ascii_age)) {
         fprintf(stderr, "Error writing response to client\n");
     }
     return n_write;
 }
 
 ///////////////////////// CACHE FUNCTIONS ////////////////////////////
-KV_Pair_T make_kvp(unsigned long hash_val, time_t expiration_date, void *buf,
-                    int buf_size, int header_size)
-{
-    KV_Pair_T kvp = malloc(sizeof(struct KV_Pair_T));    
-    kvp->val = malloc(sizeof(struct Val_T));
 
-    kvp->priority = -1;
-    kvp->hash_val = hash_val;
-    kvp->put_date = -1;
-    kvp->expiration_date = expiration_date;
-    
-    kvp->val->header_size = header_size;
-    kvp->val->content_len = buf_size - header_size;
-    kvp->val->object = malloc(buf_size);
-    memcpy(kvp->val->object, buf, buf_size);
-
-    return kvp;
-}
+/* unused function */
+//KV_Pair_T make_kvp(unsigned long hash_val, time_t expiration_date, void *buf,
+//                    int buf_size, int header_size)
+//{
+//    KV_Pair_T kvp = malloc(sizeof(struct KV_Pair_T));    
+//    kvp->val = malloc(sizeof(struct Val_T));
+//
+//    kvp->priority = -1;
+//    kvp->hash_val = hash_val;
+//    kvp->put_date = -1;
+//    kvp->expiration_date = expiration_date;
+//    
+//    kvp->val->header_size = header_size;
+//    kvp->val->content_len = buf_size - header_size;
+//    kvp->val->object = malloc(buf_size);
+//    memcpy(kvp->val->object, buf, buf_size);
+//
+//    return kvp;
+//}
 
 Cache_T Cache_new(int capacity)
 {
@@ -328,12 +379,11 @@ void Cache_free(Cache_T cache)
         check_and_free(cache->kv_pairs[i]);
     }
     check_and_free(cache->kv_pairs);
-    free(cache);
+    check_and_free(cache);
 }
 
 void Cache_put(Cache_T cache, KV_Pair_T kv)
 {
-    int curr_size = cache->curr_size;
     int capacity = cache->capacity;
     KV_Pair_T *kvps = cache->kv_pairs;
     int free_space_index = -1;
@@ -568,8 +618,6 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
         int i = *total_bytes_read - 1;
         if (((*buf)[i-3] == '\r' && (*buf)[i-2] == '\n') && (*buf)[i-1] == '\r') {
             if (!(*content_present)) {
-                // TODO remove
-                //printf("2 CRLFs, we done\n");
                 // 2 CRLFs + no content --> done reading
                 *done = true;
                 return;
@@ -606,7 +654,8 @@ int main(int argc, char *argv[])
     int clientlen; /* byte size of client's address */
     struct sockaddr_in this_serveraddr, extern_serveraddr; /* server addrs */
     struct sockaddr_in clientaddr; /* client addr */
-    struct hostent *client_hostp, *extern_serverp; /* client host info */
+    struct hostent *extern_serverp; /* client host info */
+    //struct hostent *client_hostp; /* client host info */
     char client_hostname[256];
     char client_servicename[256];
     char *buf; /* message buffer */
@@ -614,7 +663,7 @@ int main(int argc, char *argv[])
     char *extern_hostname; /* host to connect to */
     int optval; /* flag value for setsockopt */
     int n_read, n_write; /* message byte size */
-    Cache_T cache = Cache_new(10); /* proxy cache */
+    Cache_T cache = Cache_new(START_CACHE_SIZE); /* proxy cache */
 
     // Check cmd line args
     if (argc != 2) {
@@ -675,7 +724,8 @@ int main(int argc, char *argv[])
         /* 
          * accept: wait for a connection request 
          */
-        childfd = accept(parentfd, (struct sockaddr *) &clientaddr, &clientlen);
+        childfd = accept(parentfd, (struct sockaddr *) &clientaddr,
+                        (socklen_t *) &clientlen);
         if (childfd < 0) 
             error("ERROR on accept");
         
@@ -734,31 +784,45 @@ int main(int argc, char *argv[])
                                 &content_length, &num_header_bytes, &done,
                                 &content_present);
         }
-        
+
         server_portno = -1;
         extern_hostname = NULL;
+        bool connect_request = false;
         // Once we have full buffer, analyze it and create connection with
         // desired server or report back an error
         // create partially filled request struct to insert into table
-        //TODO remove
-        //printf("HTTP_LOOP done, parsing buffer now\n");
+        #if DEBUG
+        printf("HTTP_LOOP done, parsing buffer now\n");
+        #endif
         unsigned long hash_val = parse_request(buf, total_bytes_read,
-                                        &extern_hostname, &server_portno);
+                                        &extern_hostname, &server_portno,
+                                        &connect_request);
+        // if serving a connect request, enter separate loop and continue
+        // indefinitely through there
+        // TODO
+        if (connect_request) {
+            connect_loop(childfd);
+        //    check_and_free(extern_hostname);
+        //    check_and_free(buf);
+        //    close_connections(...);
+        //    continue;
+        }
+        
         //printf("DONE parsing request. Hostname: %s, portno: %d\n",
                 //extern_hostname, server_portno);
 
         // If no hostname supplied, close & wait for new connection
         if (extern_hostname == NULL) {
             fprintf(stderr, "Error: No hostname supplied in GET request:\n%s\n", buf);
-            free(extern_hostname);
-            free(buf);
+            //check_and_free(extern_hostname); not needed
+            check_and_free(buf);
             close(childfd);
             continue;
         }
 
         // Check with Cache_get(cache, key_hash) if ya existe an entry
         KV_Pair_T response = Cache_get(cache, hash_val);
-        //  if existe:
+        //  if ya existe:
         if (response != NULL) {
             //update Age & write response to client
             send_response(childfd, response);
@@ -780,10 +844,11 @@ int main(int argc, char *argv[])
                   (char *)&extern_serveraddr.sin_addr.s_addr, extern_serverp->h_length);
             extern_serveraddr.sin_port = htons(server_portno);
             if (connect(sockfd, (struct sockaddr *)&extern_serveraddr, sizeof(extern_serveraddr)) < 0) 
-              error("ERROR connecting");
+              error("ERROR connecting during GET");
 
             //Write the GET request ourselves to the server
             n_write = write(sockfd, buf, total_bytes_read);
+            (void)n_write;
             //printf("wrote %d bytes to client\n", n_write);
             //printf("CL: %d, pnli: %d, header_bytes: %d, content_present: %d\n",
             //        content_length, prev_newline_index, num_header_bytes, content_present);
@@ -816,16 +881,6 @@ int main(int argc, char *argv[])
         
             send_response(childfd, response);
 
-            //
-            //n_write = write(childfd, buf, total_bytes_read);
-            //printf("wrote %d bytes to client\n", n_write);
-            //printf("CL: %d, pnli: %d, header_bytes: %d, content_present: %d\n",
-            //        content_length, prev_newline_index, num_header_bytes, content_present);
-            //if (n_write < 0) 
-            //    error("ERROR writing to socket");
-
-
-            //TODO check for other wrap-up things
             close(sockfd);
             //Cache_print(cache);
         }
@@ -833,6 +888,8 @@ int main(int argc, char *argv[])
         free(buf);
         close(childfd);
     }
+
+    Cache_free(cache);
 
     return EXIT_SUCCESS;
 }

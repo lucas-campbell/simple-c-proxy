@@ -1,7 +1,7 @@
 # The compiler being used
 CC = gcc
 
-CFLAGS = -g
+CFLAGS = -g -Wall -Wextra -pedantic
 
 LDLIBS = -lnsl
 
