@@ -16,8 +16,8 @@ int main()
 
     int i;
 
-    int hash = 0;
-    while(i = *x++)
+    //int hash = 0;
+    while((i = *x++))
         i++;
 
     return 0;

@@ -103,29 +103,36 @@ void error(char *msg) {
  * childfd: file descriptor for communicating with the client
  * 
  */
-void connect_loop(int childfd, ...)
+void connect_loop(int childfd, char *server_hostname, int server_portno)
 {
+    (void)childfd;
+    (void)server_hostname;
+    (void)server_portno;
     // open a socket for connection with desired target
-    // int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int serverfd = socket(AF_INET, SOCK_STREAM, 0);
     // connect to the desired resource
-    /* if (sockfd < 0) 
-                error("ERROR opening socket");
-            extern_serverp = gethostbyname(extern_hostname);
-            if (extern_serverp == NULL) {
-                fprintf(stderr,"ERROR, no such host as %s\n", extern_hostname);
-                exit(0);
-            }
-            bzero((char *) &extern_serveraddr, sizeof(extern_serveraddr));
-            extern_serveraddr.sin_family = AF_INET;
-            bcopy((char *)extern_serverp->h_addr, 
-                  (char *)&extern_serveraddr.sin_addr.s_addr, extern_serverp->h_length);
-            extern_serveraddr.sin_port = htons(server_portno);
-            if (connect(sockfd, (struct sockaddr *)&extern_serveraddr, sizeof(extern_serveraddr)) < 0) 
-              error("ERROR connecting during CONNECT");
-            else {
-                //TODO send some HTTP 200 response back to client
-            }
-    */
+    if (serverfd < 0) 
+        error("ERROR opening socket");
+
+    //struct hostent *srv_hostent = gethostbyname(server_hostname);
+    //extern_serverp = gethostbyname(server_hostname);
+    //if (extern_serverp == NULL) {
+    //    fprintf(stderr,"ERROR, no such host as %s\n", server_hostname);
+    //    exit(0);
+    //}
+    //struct sockaddr_in server_addr = {0};
+    //server_addr.sin_family = AF_INET; //IPV4
+    //
+    //// copies binary IP addr
+    //bcopy((char *)extern_serverp->h_addr, 
+    //      (char *)&extern_serveraddr.sin_addr.s_addr, extern_serverp->h_length);
+    //extern_serveraddr.sin_port = htons(server_portno);
+    //if (connect(serverfd, (struct sockaddr *)&extern_serveraddr, sizeof(extern_serveraddr)) < 0) 
+    //  error("ERROR connecting during CONNECT");
+    //else {
+    //    //TODO send some HTTP 200 response back to client
+    //}
+
     // loop of:
     //   1) read from client
     //   2) send to server
@@ -652,9 +659,12 @@ int main(int argc, char *argv[])
     int listen_portno; /* port to listen on */
     int server_portno; /* port to connect to external server on */
     int clientlen; /* byte size of client's address */
-    struct sockaddr_in this_serveraddr, extern_serveraddr; /* server addrs */
+    struct sockaddr_in this_serveraddr; /* server addrs */
+    //TODO struct sockaddr_in extern_serveraddr; /* server addrs */
     struct sockaddr_in clientaddr; /* client addr */
-    struct hostent *extern_serverp; /* client host info */
+    //TODO remove struct hostent *extern_serverp; /* client host info */
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
     //struct hostent *client_hostp; /* client host info */
     char client_hostname[256];
     char client_servicename[256];
@@ -714,6 +724,17 @@ int main(int argc, char *argv[])
     if (listen(parentfd, 5) < 0) /* allow 5 requests to queue up TODO more here?*/ 
         error("ERROR on listen");
 
+    /*
+     * Setup for connecting to servers specified by the client
+     */
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC; //IPV4 or IPV6
+    hints.ai_socktype = SOCK_STREAM;
+    // sets flags to (AI_V4MAPPED | AI_ADDRCONFIG)
+    // means returned socket addresses will be suitable for connect()
+    hints.ai_flags = 0; 
+    hints.ai_protocol = 0; //any protocol allowed
+
     /* 
      * main loop: wait for a connection request, echo input line, 
      * then close connection.
@@ -747,7 +768,6 @@ int main(int argc, char *argv[])
         if (name_info != 0){
             if (name_info == EAI_SYSTEM) {
                 perror("System Error during getnameinfo()");
-                fprintf(stderr, "EHRERERERERE\n");
             }
             else
                 gai_strerror(name_info);
@@ -801,7 +821,7 @@ int main(int argc, char *argv[])
         // indefinitely through there
         // TODO
         if (connect_request) {
-            connect_loop(childfd);
+            connect_loop(childfd, extern_hostname, server_portno);
         //    check_and_free(extern_hostname);
         //    check_and_free(buf);
         //    close_connections(...);
@@ -830,6 +850,7 @@ int main(int argc, char *argv[])
         //  else get fresh one (set up connxn w/server)
         else {
             // Set up connection using desired host/port
+            /*
             sockfd = socket(AF_INET, SOCK_STREAM, 0);
             if (sockfd < 0) 
                 error("ERROR opening socket");
@@ -845,6 +866,37 @@ int main(int argc, char *argv[])
             extern_serveraddr.sin_port = htons(server_portno);
             if (connect(sockfd, (struct sockaddr *)&extern_serveraddr, sizeof(extern_serveraddr)) < 0) 
               error("ERROR connecting during GET");
+              */
+            char srv_portno[6]; //maximum of 65,535 ports
+            memset(srv_portno, 0, 6);
+            sprintf(srv_portno, "%d", server_portno); //adds null
+	    int s = getaddrinfo(extern_hostname, srv_portno, &hints, &result);
+            if (s != 0) {
+                fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+                exit(EXIT_FAILURE);
+            }
+            /* getaddrinfo() returns a list of address structures.
+              Try each address until we successfully connect(2).
+              If socket(2) (or connect(2)) fails, we (close the socket
+              and) try the next address. */
+
+            for (rp = result; rp != NULL; rp = rp->ai_next) {
+                sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+                if (sockfd == -1)
+                    continue;
+
+                if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
+                    break;                  /* Success */
+
+                close(sockfd);
+            }
+
+            if (rp == NULL) {               /* No address succeeded */
+                fprintf(stderr, "Could not connect\n");
+                exit(EXIT_FAILURE);
+            }
+
+            freeaddrinfo(result);           /* No longer needed */
 
             //Write the GET request ourselves to the server
             n_write = write(sockfd, buf, total_bytes_read);
