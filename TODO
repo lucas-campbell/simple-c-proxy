@@ -1,2 +1,5 @@
- - look @ case of given invalid host or port number -- what return?
-            
+1. look @ case of given invalid host or port number -- what return?
+    - e.g. portno over 65535 -- would handle in parse_request, near line 150
+2. Replace exit() calls with just error messages, then clean up (memory, reset 
+        vars, etc) and keep going
+3. 

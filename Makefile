@@ -1,6 +1,10 @@
 # The compiler being used
 CC = gcc
 
+CFLAGS = -g
+
+LDLIBS = -lnsl
+
 INCLUDES = $(shell echo *.h)
 
 # sed command finds first period ('.') of each word in a line and removes the
@@ -11,23 +15,28 @@ EXECUTABLES = proxy tcpserver tcpclient
 
 all: $(EXECUTABLES) $(C_TEST_FILES)
 
+# Called target-specific variable values. Only assigns to CFLAGS when building
+# target 'debug', as well as debug's (recursive) dependencies (a1.o/.c as well)
+debug: CFLAGS += -DDEBUG
+debug: proxy
+
 # $< is first dependency, $@ is target
 %.o: %.c $(INCLUDES)
-	$(CC) -g -c $< -lnsl -o $@
+	$(CC) $(CFLAGS) -c $< -o $@ $(LDLIBS)
 
 proxy: a1.o
-	$(CC) -g $< -lnsl -o $@
+	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
 tcpserver: tcpserver.o
-	$(CC) -g $< -lnsl -o $@
+	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
 tcpclient: tcpclient.o
-	$(CC) -g $< -lnsl -o $@
+	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
 # $^ is a space-separated list of the prerequisites (names after the colon),
 # with duplicates removed
 test_%: test_%.o %.o $(INCLUDES)
-	$(CC) -g $^ -o $@
+	$(CC) $(CFLAGS) -o $@ $^
 
 clean: 
 	rm -f *.o .*.swp $(EXECUTABLES) $(C_TEST_FILES)

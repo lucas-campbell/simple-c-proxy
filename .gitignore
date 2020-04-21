@@ -1,8 +1,14 @@
+# Executables
 test_MinHeap
 test_DynamicArray
 proxy
 tcpserver
 tcpclient
+test
+
+# VSCode
+.vscode/
+
 
 # Vim
 *.swp

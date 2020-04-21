@@ -56,13 +56,15 @@ void check_and_free(void *mem);
 unsigned long hash(unsigned char *data, size_t len);
 void Cache_print(Cache_T cache);
 
-// Hash function, originally written by Professor Daniel J Bernstein. Algorithm
-// taken from online.
-// Params:
-//      data: pointer to data that gets implicitly cast as char*
-//      len: # of bytes to hash
-// Returns:
-//      unsigned hash value
+/* 
+ * Hash function, originally written by Professor Daniel J Bernstein. Algorithm
+ * taken from online.
+ * Params:
+ *      data: pointer to data that gets implicitly cast as char*
+ *      len: # of bytes to hash
+ * Returns:
+ *      unsigned hash value
+ */
 unsigned long hash(unsigned char *data, size_t len)
 {
     size_t count = 0;
@@ -104,6 +106,7 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
     resource = malloc(strlen(line));
 
     //***NOTE***: only bother scanning until \r bc strtok replaces \n with \0
+    // Also, "resource" var here has null char placed @ end by sscanf
     if (sscanf(line, "GET %s HTTP/%d.%d\r", resource, &major, &minor) != 3) {
         fprintf(stderr, "Error with first line of GET Request\n%s\n", tokens);
         exit(-1);
@@ -134,19 +137,20 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
         }
         line = strtok(NULL, "\n");
     }
-    //TODO REMOVE 
-    //printf("parsed request for hostname\n");
+    #if DEBUG
+    printf("parsed request for hostname\n");
+    #endif
     
     // create hash based on hostname + resource (+port)
-    int to_hash_len = strlen(resource);
+    int to_hash_len = strlen(resource); //ok bc sscanf adds null char
     char ascii_portno[6]; //maximum of 65,535 ports
     memset(ascii_portno, 0, 6);
     if (*hostname != NULL) {
-        to_hash_len += strlen(*hostname);
+        to_hash_len += strlen(*hostname); //sscanf adds null
     }
     // portno may have been specified in 'Host:' header field
     //if (*portno != -1) {
-        sprintf(ascii_portno, "%d", *portno);
+        sprintf(ascii_portno, "%d", *portno); //adds null
         to_hash_len += strlen(ascii_portno);
     //}
     //else { //we set it ourselves to 80 already, so no need to sprintf
@@ -154,10 +158,9 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
     //    ascii_portno[1] = '0';
     //    ascii_portno[2] = '\0';
     //}
-    //TODO REMOVE 
-    //printf("portno stuff done\n");
-    //Order of hashed string: resource, hostname, port num
+
     char to_hash[to_hash_len];
+    //Order of hashed string: resource, hostname, port num     
     memcpy(to_hash, resource, strlen(resource));
     if (*hostname != NULL) {
         memcpy(to_hash+(strlen(resource)), *hostname, strlen(*hostname));
@@ -182,10 +185,11 @@ unsigned long parse_request(char *buf, int len, char **hostname, int *portno)
 void parse_response(char *buf, int size, KV_Pair_T kvp) {
     int major, minor, response_code, max_age, content_length;
     content_length = 0;
-    max_age = 3600; //default
+    max_age = -1;
     char * line;
     char reason[100];
     char tokens[size];
+
     memcpy(tokens, buf, size);
     //split into tokens based on newlines
     line = strtok(tokens, "\n");
@@ -202,7 +206,8 @@ void parse_response(char *buf, int size, KV_Pair_T kvp) {
             if(strncmp(line, "Cache-Control:", 14) == 0) {
                 char *maybe = strstr(line, "max-age=");
                 if (maybe != NULL) {
-                    sscanf(maybe, "%d", &max_age);
+                    max_age = 0;
+                    sscanf(maybe, "max-age=%d\r", &max_age);
                 }
                 got_age = true;
             }
@@ -218,6 +223,8 @@ void parse_response(char *buf, int size, KV_Pair_T kvp) {
 
     //fill in kvp
     time_t now = time(NULL);
+    if (max_age == -1)
+        max_age = 3600; //default
     time_t m_age = max_age;
     kvp->expiration_date = m_age + now;
     kvp->val->content_len = content_length;
@@ -240,22 +247,27 @@ int send_response(int sockfd, KV_Pair_T response)
     // should be 1 anyways, but trying to be portableish
     double one_second = difftime(one, zero); 
 
-    //Build Age header field
+    /* Build Age header field */
     time_t now = time(NULL);
     int age = (int)(difftime(now, response->put_date) * one_second);
-    char ascii_age[107]; //should be enough space for the number of seconds
+    //should be enough space for the number of seconds
+    char ascii_age[107]; 
     sprintf(ascii_age, "Age: %d\r\n", age);
     char *newline = strchr(ascii_age, '\n');
     *(newline + 1) = '\0'; //manual null char
+
+    //shortcut vars
     int header_size = response->val->header_size;
     int content_len = response->val->content_len;
-     
-    //msg to finally send to server
-    char msg[header_size + content_len + strlen(ascii_age)];
-    //var for easy access
     char *to_send = (char *)(response->val->object); 
+     
+    /* Message to finally send to server */
+    char msg[header_size + content_len + strlen(ascii_age)];
 
-    //info before content
+    /*
+     * Order: OG Header(s) - extra CRLF, added Age header+ending CRLF,
+     * then content
+     */
     memcpy(msg, to_send, header_size-2); //not final CRLF
     memcpy(msg+(header_size-2), ascii_age, strlen(ascii_age));
     msg[header_size+(strlen(ascii_age)-2)] = '\r';
@@ -263,7 +275,10 @@ int send_response(int sockfd, KV_Pair_T response)
 
     //content, if any
     if (content_len > 0) {
-        memcpy(msg+(header_size + strlen(ascii_age)), to_send+header_size, content_len);
+        // offset by original header + new age header
+        memcpy(msg+(header_size + strlen(ascii_age)),
+                // offset by original header
+                to_send+header_size, content_len);
     }
 
     int n_write = write(sockfd, msg, header_size+content_len+strlen(ascii_age));
@@ -351,7 +366,7 @@ void Cache_put(Cache_T cache, KV_Pair_T kv)
         kvps[free_space_index] = kv;
         for (int j = 0; j < capacity; j++)
             //increment all others no matter what
-            if (kvps[j] != NULL && kvps[j]->hash_val != kv->hash_val)
+            if (kvps[j] != NULL && j != free_space_index)
                 kvps[j]->priority += 1;
         cache->curr_size++;
         return;
@@ -363,6 +378,9 @@ void Cache_put(Cache_T cache, KV_Pair_T kv)
     for (int i = 0; i < capacity; i++) {
         //check stale
         if (curr_time > kvps[i]->expiration_date) {
+            #if DEBUG
+	    fprintf(stderr, "stale\n");
+	    #endif
             free(kvps[i]->val->object);
             free(kvps[i]->val);
             free(kvps[i]);
@@ -391,7 +409,8 @@ void Cache_put(Cache_T cache, KV_Pair_T kv)
     kvps[least_recently_requested] = kv;
     //increment all other priorities
     for (int j = 0; j < capacity; j++)
-        if (kvps[j] != NULL && kvps[j]->hash_val != kv->hash_val)
+        //if (kvps[j] != NULL && kvps[j]->hash_val != kv->hash_val)
+        if (kvps[j] != NULL && j != least_recently_requested)
             kvps[j]->priority += 1;
     return;
 }
@@ -518,9 +537,13 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
                         bool *content_present)
 {
     //Read a byte from stream
-    //printf("about to httpread\n");
+    #if DEBUG
+    printf("about to httpread\n");
+    #endif
     *n_read = read(childfd, (*buf)+(*total_bytes_read), 1);
-    //printf("done httpread\n");
+    #if DEBUG
+    printf("done httpread\n");
+    #endif
     *total_bytes_read += *n_read; 
     *c = (*buf)[(*total_bytes_read)-1];
     if (*n_read < 0) 
@@ -529,11 +552,12 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
         *done = true;
         return;
     }
-    //TODO remove print statements
-    //printf("server received %d bytes, last byte received: %x,"
-    //        "curr buffer: %s\n", *n_read, (*buf)[*total_bytes_read-1], *buf);
-    //printf("curr_bufsize: %d, total_bytes_read: %d\n\n", *curr_bufsize, *total_bytes_read);
-    //printf("content_present: %d, content_length: %d, header: %d\n", *content_present, *content_length, *num_header_bytes);
+    #if DEBUG
+    printf("server received %d bytes, last byte received: %x,"
+        "curr buffer: %s\n", *n_read, (*buf)[*total_bytes_read-1], *buf);
+    printf("curr_bufsize: %d, total_bytes_read: %d\n\n", *curr_bufsize, *total_bytes_read);
+    printf("content_present: %d, content_length: %d, header: %d\n", *content_present, *content_length, *num_header_bytes);
+    #endif
     // May need to expand buffer if especially long GET request
     if (*total_bytes_read == *curr_bufsize) {
         *curr_bufsize = 2*(*curr_bufsize);
@@ -559,12 +583,11 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
         else if (sscanf((*buf)+((*prev_newline_index)+1),
                     "Content-Length: %d\r\n", content_length) == 1) {
             //Prev line indicated that message contains a body/payload
-            //TODO remove
-            //printf("HERE\n");
             *content_present = true;
         }
-        //TODO remove
-        //printf("Looked for Content-Length in: %s\n",(*buf)+(*prev_newline_index)+1);
+        #if DEBUG
+        printf("Looked for Content-Length in: %s\n",(*buf)+(*prev_newline_index)+1);
+        #endif
         *prev_newline_index = *total_bytes_read-1;
     }
     if (*total_bytes_read == *num_header_bytes + *content_length &&
@@ -584,6 +607,8 @@ int main(int argc, char *argv[])
     struct sockaddr_in this_serveraddr, extern_serveraddr; /* server addrs */
     struct sockaddr_in clientaddr; /* client addr */
     struct hostent *client_hostp, *extern_serverp; /* client host info */
+    char client_hostname[256];
+    char client_servicename[256];
     char *buf; /* message buffer */
     char *hostaddrp; /* dotted decimal host addr string */
     char *extern_hostname; /* host to connect to */
@@ -637,7 +662,7 @@ int main(int argc, char *argv[])
     /* 
      * listen: make this socket ready to accept connection requests
      */
-    if (listen(parentfd, 5) < 0) /* allow 5 requests to queue up */ 
+    if (listen(parentfd, 5) < 0) /* allow 5 requests to queue up TODO more here?*/ 
         error("ERROR on listen");
 
     /* 
@@ -658,15 +683,38 @@ int main(int argc, char *argv[])
          * gethostbyaddr: determine who sent the message, fills in clientaddr
          * struct
          */
-        client_hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, 
-                              sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-        if (client_hostp == NULL)
-            error("ERROR on gethostbyaddr");
+        //client_hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, 
+        //                      sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+        memset(client_hostname, 0, sizeof(client_hostname));
+        memset(client_servicename, 0, sizeof(client_servicename));
+        //memset(&clientaddr, 0, clientlen);
+        #if DEBUG
+        fprintf(stderr, "Before getnameinfo\n");
+        #endif
+        int name_info = getnameinfo((struct sockaddr *)&clientaddr, clientlen, client_hostname,
+                    sizeof(client_hostname), client_servicename,
+                    sizeof(client_servicename), 0);
+        if (name_info != 0){
+            if (name_info == EAI_SYSTEM) {
+                perror("System Error during getnameinfo()");
+                fprintf(stderr, "EHRERERERERE\n");
+            }
+            else
+                gai_strerror(name_info);
+        }
+        #if DEBUG
+        fprintf(stderr, "getnameinfo returned: %d\n", name_info);
+        #endif
+        //if (client_hostp == NULL)
+        //    //error("ERROR on gethostbyaddr");
+        //    herror("ERROR on gethostbyaddr");
         hostaddrp = inet_ntoa(clientaddr.sin_addr);
         if (hostaddrp == NULL)
             error("ERROR on inet_ntoa\n");
-        //printf("server established connection with %s (%s)\n", 
-               //client_hostp->h_name, hostaddrp);
+        #if DEBUG
+        printf("server established connection with %s (%s)\n", 
+                client_hostname, hostaddrp);
+        #endif
         
         /* 
          * read: read input string from the client
@@ -761,6 +809,8 @@ int main(int argc, char *argv[])
             response->put_date = -1;
             
             parse_response(buf, total_bytes_read, response);
+
+            response->put_date = time(NULL);
 
             Cache_put(cache, response);
         

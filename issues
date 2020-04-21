@@ -1,18 +1,2 @@
-1. in parse_request, uneccessarily (?) add length of "resource" (line 144) if hostname
-is not null. is ok? <-- OK i think
-
-2. line 164, strlen-1 should just be strlen(resource)
-
-3. In parse_response (191) we start strtok'ing without copying the string first
-
-4. line 258: should there be a check for if content exists or not?
-
-5. line 248: should manually add \0 to end of ascii_age in order to make sure
-that strlen(ascii_age) always works (after the \r\n). Also, doesn't this need
-"Age: " before the actual age?
-    -->done i think
-6. check the shenanigans on line 168 (lots of strlens)
 7. need to fix line 732 where we bcopy extern_serverp->h_addr bc it doesn't
 exist in that struct appparently? Yet it compiles and works
-8. check for line 104/107: does sscanf end "resource" with a null char? if not,
-    should either use calloc or add '\0' manually.

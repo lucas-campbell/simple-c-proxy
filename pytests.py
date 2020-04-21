@@ -6,7 +6,7 @@ import subprocess
 portno = 9110
 
 # each file is a subcategory of cases
-tests = ['simple.txt']
+tests = ['basic.txt']
 passed = []
 failed = []
 num_cases = 0
@@ -16,7 +16,10 @@ for f in tests:
         for case in cases:
             case = case.rstrip()
             reg = '{}'.format(case)
-            proxy = '{} -x localhost:{}'.format(case, portno)
+            if len(sys.argv) > 1:
+                proxy = '{} -x {}:{}'.format(case, sys.argv[1], portno)
+            else:
+                proxy = '{} -x localhost:{}'.format(case, portno)
             reg = subprocess.run(['curl', '-s', reg], stdout=subprocess.PIPE)
             proxy = subprocess.run(['curl', '-s'] + proxy.split(), stdout=subprocess.PIPE)
             if reg.returncode == 0 and proxy.returncode != 0 or \
