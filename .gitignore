@@ -9,6 +9,8 @@ test
 # VSCode
 .vscode/
 
+# python cache
+__pycache__/
 
 # Vim
 *.swp

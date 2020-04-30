@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/select.h>
 
 #define START_BUFSIZE 100
 #define START_CACHE_SIZE 10
@@ -100,20 +101,21 @@ void error(char *msg) {
  * connection is closed by either end, proxy will attempt to send outstanding
  * data from closed side to other side, then closes both connexns & returns.
  * 
- * childfd: file descriptor for communicating with the client
+ * clientfd: file descriptor for communicating with the client
  * 
  */
-void connect_loop(int childfd, char *server_hostname, int server_portno,
+void connect_loop(int clientfd, char *server_hostname, int server_portno,
                   struct addrinfo hints)
 {
     struct addrinfo *result, *rp;
-    (void)childfd;
-    (void)server_hostname;
-    (void)server_portno;
+    //(void)clientfd;
+    //(void)server_hostname;
+    //(void)server_portno;
     // open a socket for connection with desired target
     int serverfd; //will be for comms with server
-    int n_write, n_read, total_bytes_read;
-    bool connection_open;
+    int n_write, n_read;
+    char *msg_buf, *error_msg;
+    bool fail = false;
 
     /* Set up connection using desired host/port */
     char srv_portno[6]; //maximum of 65,535 ports
@@ -134,6 +136,7 @@ void connect_loop(int childfd, char *server_hostname, int server_portno,
             continue;
         if (connect(serverfd, rp->ai_addr, rp->ai_addrlen) != -1)
             break;                  /* Success */
+        //else
         close(serverfd);
     }
     if (rp == NULL) {               /* No address succeeded */
@@ -144,10 +147,10 @@ void connect_loop(int childfd, char *server_hostname, int server_portno,
 
     //TODO send some HTTP 200 response back to client
     char *success = "HTTP/1.1 200 OK\r\n";
-    char *msg_buf = malloc(sizeof(START_BUFSIZE));
+    msg_buf = malloc(sizeof(START_BUFSIZE));
     memcpy(msg_buf, success, strlen(success));
     msg_buf[strlen(success)] = '\0';
-    n_write = write(childfd, msg_buf, strlen(msg_buf));
+    n_write = write(clientfd, msg_buf, strlen(msg_buf));
     if (n_write == -1) {
         //TODO fail some other way
         error("Writing to client failed:");
@@ -159,22 +162,94 @@ void connect_loop(int childfd, char *server_hostname, int server_portno,
     //   3) read from server
     //   4) send to client
     // with error checking & seeing if connexn closed/etc
+    fd_set active_fd_set, read_fd_set;
+    struct timeval * tv = NULL;
+    FD_ZERO (&active_fd_set);
+    FD_SET (clientfd, &active_fd_set);
+    FD_SET (serverfd, &active_fd_set);
 
-    connection_open = true;
-    while (connection_open) {
-        //while (n_read > 
-        total_bytes_read = 0;
-        n_read = read(childfd, msg_buf+total_bytes_read, 1);
-        if (n_read < 0)
-            error("ERROR reading from socket");
-        if (n_read == 0) {
-            connection_open = false;
-            //TODO close connection with server
-            continue;
+    for (;;) {
+        read_fd_set = active_fd_set;
+        //TODO maybe also have a write_fds here, but probably not
+        int ret = select(FD_SETSIZE, &read_fd_set, NULL, NULL, tv);
+        if (ret == -1) {
+            fail = true;
+            error_msg = "select() during CONNECT method";
+            break;
         }
-        total_bytes_read += n_read;
-
+        // look through sockets with data ready to be read
+        for (int i = 0; i < FD_SETSIZE; i++) {
+            if (FD_ISSET(i, &read_fd_set)) {
+                if (i == clientfd) {
+                    // read from client, send to server
+                    memset(msg_buf, 0, START_BUFSIZE);
+                    n_read = read(clientfd, msg_buf, START_BUFSIZE);
+                    if (n_read < 0) {
+                        fail = true;
+                        error_msg = "reading from client in CONNECT tunnel";
+                        break;
+                    }
+                    else if (n_read == 0) //TODO possibly add check/print here?
+                        break;
+                    else {
+                        n_write = write(serverfd, msg_buf, n_read);
+                        if (n_write <= 0) {
+                            fail = true;
+                            error_msg = "writing to server in CONNECT tunnel";
+                            break;
+                        }
+                    }
+                }
+                else if (i == serverfd) {
+                    //read from server, send to client
+                    memset(msg_buf, 0, START_BUFSIZE);
+                    n_read = read(serverfd, msg_buf, START_BUFSIZE);
+                    if (n_read < 0) {
+                        fail = true;
+                        error_msg = "reading from server in CONNECT tunnel";
+                        break;
+                    }
+                    else if (n_read == 0) //TODO possibly add check/print here?
+                        break;
+                    else {
+                        n_write = write(clientfd, msg_buf, n_read);
+                        if (n_write <= 0) {
+                            fail = true;
+                            error_msg = "writing to client in CONNECT tunnel";
+                            break;
+                        }
+                    }
+                }
+                else {
+                    //error, fd on is not clientfd or serverfd
+                    fprintf(stderr, "Bad value in FD_ISSET");
+                }
+            }
+        }
     }
+
+    if (fail) {
+        perror(error_msg);
+    }
+    close(clientfd);
+    close(serverfd);
+    return;
+
+    //connection_open = true;
+    //while (connection_open) {
+    //    //while (n_read > 
+    //    total_bytes_read = 0;
+    //    n_read = read(clientfd, msg_buf+total_bytes_read, 1);
+    //    if (n_read < 0)
+    //        error("ERROR reading from socket");
+    //    if (n_read == 0) {
+    //        connection_open = false;
+    //        //TODO close connection with server
+    //        continue;
+    //    }
+    //    total_bytes_read += n_read;
+
+    //}
 
 }
 
