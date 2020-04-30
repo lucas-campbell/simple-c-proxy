@@ -155,6 +155,7 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
         //TODO fail some other way
         error("Writing to client failed:");
     }
+    //n_read = read(clientfd, msg_buf, START_BUFSIZE);
 
     // loop of:
     //   1) read from client
@@ -167,7 +168,9 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     FD_ZERO (&active_fd_set);
     FD_SET (clientfd, &active_fd_set);
     FD_SET (serverfd, &active_fd_set);
-
+#if DEBUG
+    printf("entering select loop in CONNECT\n");
+#endif
     for (;;) {
         read_fd_set = active_fd_set;
         //TODO maybe also have a write_fds here, but probably not
@@ -227,6 +230,9 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
             }
         }
     }
+#if DEBUG
+    printf("end of select loop in CONNECT\n");
+#endif
 
     if (fail) {
         perror(error_msg);
