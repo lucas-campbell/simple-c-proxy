@@ -9,7 +9,7 @@ from cases_info import Cases_Info
 q = queue.Queue()
 portno = 9110
 cases_info = Cases_Info()
-num_threads = 2
+num_threads = 4
 keep_working = True
 
 

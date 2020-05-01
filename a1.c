@@ -10,6 +10,7 @@
  https://www.cs.cmu.edu/afs/cs/academic/class/15213-f99/www/class26/tcpclient.c
  *
  */
+#include <pthread.h>
 #include <stdbool.h>
 #include <time.h>
 #include <stdio.h>
@@ -105,8 +106,14 @@ void error(char *msg) {
  * 
  */
 void connect_loop(int clientfd, char *server_hostname, int server_portno,
-                  struct addrinfo hints, char *request, int request_len)
+                  const struct addrinfo hints, char *request, int request_len)
 {
+#if TRACE
+    printf("Entering connect_loop()\n");
+#endif
+    // TODO remove these params
+    (void)request;
+    (void)request_len;
     struct addrinfo *result, *rp;
     //(void)clientfd;
     //(void)server_hostname;
@@ -199,11 +206,12 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     //    close(clientfd);
     //    return;
     //}
+    // TODO free this?
     msg_buf = malloc(START_BUFSIZE);
     memset(msg_buf, 0, START_BUFSIZE);
     //n_read = read(serverfd, msg_buf, START_BUFSIZE);
 
-    //TODO send some HTTP 200 response back to client
+    //send HTTP 200 confirmation response back to client
     char *success = "HTTP/1.1 200 OK\r\n\r\n";
     //msg_buf = malloc(sizeof(START_BUFSIZE));
     memcpy(msg_buf, success, strlen(success));
@@ -242,6 +250,9 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
         for (int i = 0; i < FD_SETSIZE; i++) {
             if (FD_ISSET(i, &read_fd_set)) {
                 if (i == clientfd) {
+#if TRACE
+                    printf("msg from client\n");
+#endif
                     // read from client, send to server
                     memset(msg_buf, 0, START_BUFSIZE);
                     n_read = read(clientfd, msg_buf, START_BUFSIZE);
@@ -264,6 +275,9 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
                     }
                 }
                 else if (i == serverfd) {
+#if TRACE
+                    printf("msg from server\n");
+#endif
                     //read from server, send to client
                     memset(msg_buf, 0, START_BUFSIZE);
                     n_read = read(serverfd, msg_buf, START_BUFSIZE);
@@ -301,24 +315,10 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     }
     close(clientfd);
     close(serverfd);
+#if TRACE
+    printf("End of connect_loop()\n");
+#endif
     return;
-
-    //connection_open = true;
-    //while (connection_open) {
-    //    //while (n_read > 
-    //    total_bytes_read = 0;
-    //    n_read = read(clientfd, msg_buf+total_bytes_read, 1);
-    //    if (n_read < 0)
-    //        error("ERROR reading from socket");
-    //    if (n_read == 0) {
-    //        connection_open = false;
-    //        //TODO close connection with server
-    //        continue;
-    //    }
-    //    total_bytes_read += n_read;
-
-    //}
-
 }
 
 //
@@ -377,7 +377,7 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
         line = strtok(NULL, "\n");
     }
 #if DEBUG
-    printf("parsed %s request: %s\n", connect_request?"CONNECT":"GET", buf);
+    printf("parsed %s request: %s\n", (ret == 1)?"CONNECT":"GET", buf);
     if (*hostname != NULL)
         printf("Got host: %s, set portno to %d\n", *hostname, *portno);
 #endif
@@ -776,27 +776,28 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
                         bool *content_present)
 {
     //Read a byte from stream
-#if DEBUG
-    printf("about to httpread\n");
-#endif
+//#if TRACE
+//    printf("about to httpread\n");
+//#endif
     *n_read = read(childfd, (*buf)+(*total_bytes_read), 1);
-#if DEBUG
-    printf("done httpread\n");
-#endif
+//#if TRACE
+//    printf("done httpread\n");
+//#endif
     *total_bytes_read += *n_read; 
     *c = (*buf)[(*total_bytes_read)-1];
+    //TODO error recovery
     if (*n_read < 0) 
         error("ERROR reading from socket");
     if (*n_read == 0) {
         *done = true;
         return;
     }
-#if DEBUG
-    printf("server received %d bytes, last byte received: %x,"
-        "curr buffer: %s\n", *n_read, (*buf)[*total_bytes_read-1], *buf);
-    printf("curr_bufsize: %d, total_bytes_read: %d\n\n", *curr_bufsize, *total_bytes_read);
-    printf("content_present: %d, content_length: %d, header: %d\n", *content_present, *content_length, *num_header_bytes);
-#endif
+//#if TRACE
+//    printf("server received %d bytes, last byte received: %x,"
+//        "curr buffer: %s\n", *n_read, (*buf)[*total_bytes_read-1], *buf);
+//    printf("curr_bufsize: %d, total_bytes_read: %d\n\n", *curr_bufsize, *total_bytes_read);
+//    printf("content_present: %d, content_length: %d, header: %d\n", *content_present, *content_length, *num_header_bytes);
+//#endif
     // May need to expand buffer if especially long GET request
     if (*total_bytes_read == *curr_bufsize) {
         *curr_bufsize = 2*(*curr_bufsize);
@@ -822,9 +823,10 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
             //Prev line indicated that message contains a body/payload
             *content_present = true;
         }
-#if DEBUG
-        printf("Looked for Content-Length in: %s\n",(*buf)+(*prev_newline_index)+1);
-#endif
+        //TODO remove this and others above
+//#if TRACE
+//        printf("Looked for Content-Length in: %s\n",(*buf)+(*prev_newline_index)+1);
+//#endif
         *prev_newline_index = *total_bytes_read-1;
     }
     if (*total_bytes_read == *num_header_bytes + *content_length &&
@@ -941,7 +943,7 @@ int main(int argc, char *argv[])
         memset(client_hostname, 0, sizeof(client_hostname));
         memset(client_servicename, 0, sizeof(client_servicename));
         //memset(&clientaddr, 0, clientlen);
-#if DEBUG
+#if TRACE
         fprintf(stderr, "Before getnameinfo\n");
 #endif
         int name_info = getnameinfo((struct sockaddr *)&clientaddr, clientlen, client_hostname,
@@ -954,7 +956,7 @@ int main(int argc, char *argv[])
             else
                 gai_strerror(name_info);
         }
-#if DEBUG
+#if TRACE
         fprintf(stderr, "getnameinfo returned: %d\n", name_info);
 #endif
         //if (client_hostp == NULL)
@@ -991,7 +993,7 @@ int main(int argc, char *argv[])
         // Once we have full buffer, analyze it and create connection with
         // desired server or report back an error
         // create partially filled request struct to insert into table
-#if DEBUG
+#if TRACE
         printf("HTTP_LOOP done, parsing buffer now\n");
 #endif
         server_portno = -1;
@@ -1016,9 +1018,12 @@ int main(int argc, char *argv[])
             continue;
         }
 
-#if DEBUG
+#if TRACE
         printf("DONE parsing request. Hostname: %s, portno: %d\n",
                 extern_hostname, server_portno);
+#endif
+#if DEBUG
+        printf("Received request:\n%s\n", buf);
 #endif
 
         // if serving a connect request, enter separate loop and continue
@@ -1066,6 +1071,7 @@ int main(int argc, char *argv[])
             }
             if (rp == NULL) {               /* No address succeeded */
                 fprintf(stderr, "Could not connect during GET\n");
+                //TODO don't fail here, restart!
                 exit(EXIT_FAILURE);
             }
             freeaddrinfo(result);           /* No longer needed */

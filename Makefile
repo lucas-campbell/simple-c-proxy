@@ -3,7 +3,7 @@ CC = gcc
 
 CFLAGS = -g -Wall -Wextra -pedantic
 
-LDLIBS = -lnsl
+LDLIBS = -lnsl -pthread
 
 INCLUDES = $(shell echo *.h)
 
@@ -19,6 +19,9 @@ all: $(EXECUTABLES) $(C_TEST_FILES)
 # target 'debug', as well as debug's (recursive) dependencies (a1.o/.c as well)
 debug: CFLAGS += -DDEBUG
 debug: proxy
+
+trace: CFLAGS += -DDEBUG -DTRACE
+trace: proxy
 
 # $< is first dependency, $@ is target
 %.o: %.c $(INCLUDES)
