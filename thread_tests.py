@@ -51,7 +51,7 @@ def do_work(info):
 def main():
     try:
         # each file is a subcategory of cases
-        tests = ['simple.txt']
+        tests = ['simple.txt', 'https.txt']
 
         threads = [threading.Thread(target=worker) for _ in range(num_threads)]
         # turn on the worker threads

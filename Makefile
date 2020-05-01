@@ -27,7 +27,7 @@ trace: proxy
 %.o: %.c $(INCLUDES)
 	$(CC) $(CFLAGS) -c $< -o $@ $(LDLIBS)
 
-proxy: a1.o utils.o connect.o
+proxy: main.o utils.o cache.o http.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
 
 tcpserver: tcpserver.o

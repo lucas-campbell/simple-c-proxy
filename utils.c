@@ -1,8 +1,8 @@
+#include "utils.h"
+
 #include <stdint.h> //uint32_t
 #include <stdlib.h> //free
 #include <stdio.h> //perror
-
-#include "utils.h"
 
 /*
  * Safer free function
