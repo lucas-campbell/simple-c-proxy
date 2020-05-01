@@ -116,6 +116,7 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     int n_write, n_read;
     char *msg_buf, *error_msg;
     bool fail = false;
+    bool closed = false;
 
     /* Set up connection using desired host/port */
     char srv_portno[6]; //maximum of 65,535 ports
@@ -126,7 +127,8 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
         exit(EXIT_FAILURE);
     }
-    /* getaddrinfo() returns a list of address structures.
+    /* Connect to desired resource.
+     * getaddrinfo() returns a list of address structures.
       Try each address until we successfully connect(2).
       If socket(2) (or connect(2)) fails, we (close the socket
       and) try the next address. */
@@ -146,39 +148,63 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     freeaddrinfo(result);           /* No longer needed */
 
     ////connection request to forward editing//////////////////////
-    char cpy[request_len];
-    char msg_to_fwd[request_len];
-    memcpy(cpy, request, request_len);
-    char *line = strtok(cpy, "\n");
-    while (line != NULL) {
-        //Proxy-Connection header advised not to be sent in any requests
-        char *bad = strstr(line, "Proxy-Connection");
-        if (bad == NULL) {
-            // TODO some nice pointer math that copies appropriate 
-            // bytes from char *request to msg_to_fwd + adds \r, 
-            // aka just copying over appropriate header fields.
-            // TODO
-            // To look at: https://tools.ietf.org/html/rfc7230#appendix-A.1.2
-            // https://tools.ietf.org/html/rfc7230#section-5.7.2
-            // https://tools.ietf.org/html/rfc7231#section-4.3.6
-        }
-    }
+    //// TODO maybe make this a separate func
+    ////char        cpy[request_len]; //for strtok'ing
+    ////char msg_to_fwd[request_len]; //for sending to the server
+    //char        *cpy = malloc(request_len); //for strtok'ing
+    //char *msg_to_fwd = malloc(request_len); //for sending to the server
+    //memset(cpy,        0, request_len);
+    //memset(msg_to_fwd, 0, request_len);
+    //int bytes = 0; //total bytes of msg, updated as copied over
+    //int line_len = 0; //length of each line of request
+    //memcpy(cpy, request, request_len);
+    //char *line = strtok(cpy, "\n");
+    //while (line != NULL) {
+    //    //Proxy-Connection header advised not to be sent in any requests
+    //    char *bad = strstr(line, "Proxy-Connection");
+    //    if (bad == NULL) {
+    //        // TODO some nice pointer math that copies appropriate 
+    //        // bytes from char *request to msg_to_fwd + adds \r, 
+    //        // aka just copying over appropriate header fields.
+    //        // TODO
+    //        // To look at: https://tools.ietf.org/html/rfc7230#appendix-A.1.2
+    //        // https://tools.ietf.org/html/rfc7230#section-5.7.2
+    //        // https://tools.ietf.org/html/rfc7231#section-4.3.6
+    //        line_len = strlen(line);
+    //        memcpy(msg_to_fwd+bytes, line, line_len);
+    //        bytes += line_len;
+    //        msg_to_fwd[bytes] = '\n'; //bc strtok takes out \n
+    //        bytes++;
+    //    }
+    //    line = strtok(NULL, "\n");
+    //}
+    //bytes--;
 
-    //////////////////////////
+    ////////////////////////////
 
-    n_write = write(serverfd, request, request_len);
-    if (n_write != request_len) {
-        fprintf(stderr, "Error forwarding connect request to server\n");
-        close(serverfd);
-        close(clientfd);
-        return;
-    }
-    msg_buf = malloc(sizeof(START_BUFSIZE));
+    //n_write = write(serverfd, msg_to_fwd, bytes);
+
+    //if (n_write != bytes) {
+    //    fprintf(stderr, "Error forwarding connect request to server\n");
+    //    close(serverfd);
+    //    close(clientfd);
+    //    return;
+    //}
+
+    //n_write = write(serverfd, request, request_len);
+
+    //if (n_write != request_len) {
+    //    fprintf(stderr, "Error forwarding connect request to server\n");
+    //    close(serverfd);
+    //    close(clientfd);
+    //    return;
+    //}
+    msg_buf = malloc(START_BUFSIZE);
     memset(msg_buf, 0, START_BUFSIZE);
-    n_read = read(serverfd, msg_buf, START_BUFSIZE);
+    //n_read = read(serverfd, msg_buf, START_BUFSIZE);
 
     //TODO send some HTTP 200 response back to client
-    char *success = "HTTP/1.1 200 OK\r\n";
+    char *success = "HTTP/1.1 200 OK\r\n\r\n";
     //msg_buf = malloc(sizeof(START_BUFSIZE));
     memcpy(msg_buf, success, strlen(success));
     msg_buf[strlen(success)] = '\0';
@@ -203,7 +229,7 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
 #if DEBUG
     printf("entering select loop in CONNECT\n");
 #endif
-    for (;;) {
+    while (!(fail || closed)) {
         read_fd_set = active_fd_set;
         //TODO maybe also have a write_fds here, but probably not
         int ret = select(FD_SETSIZE, &read_fd_set, NULL, NULL, tv);
@@ -224,8 +250,10 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
                         error_msg = "reading from client in CONNECT tunnel";
                         break;
                     }
-                    else if (n_read == 0) //TODO possibly add check/print here?
+                    else if (n_read == 0) { //TODO possibly add check/print here?
+                        closed = true;
                         break;
+                    }
                     else {
                         n_write = write(serverfd, msg_buf, n_read);
                         if (n_write <= 0) {
@@ -244,8 +272,10 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
                         error_msg = "reading from server in CONNECT tunnel";
                         break;
                     }
-                    else if (n_read == 0) //TODO possibly add check/print here?
+                    else if (n_read == 0) { //TODO possibly add check/print here?
+                        closed = true;
                         break;
+                    }
                     else {
                         n_write = write(clientfd, msg_buf, n_read);
                         if (n_write <= 0) {
@@ -393,7 +423,7 @@ void parse_response(char *buf, int size, KV_Pair_T kvp) {
     int major, minor, response_code, max_age, content_length;
     content_length = 0;
     max_age = -1;
-    char * line;
+    char * line = NULL;
     char reason[100];
     char tokens[size];
 
@@ -948,7 +978,8 @@ int main(int argc, char *argv[])
         total_bytes_read = prev_newline_index = content_length = num_header_bytes = 0;
         done = check_newline = content_present = false;
         buf = malloc(START_BUFSIZE);
-        bzero(buf, START_BUFSIZE);
+        memset(buf, 0, START_BUFSIZE);
+        //bzero(buf, START_BUFSIZE);
         // Read until have received entire request
         while (!done) {
             http_receive_loop(childfd, &buf, &c, &n_read, &total_bytes_read,
