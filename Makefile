@@ -3,7 +3,7 @@ CC = gcc
 
 CFLAGS = -g -Wall -Wextra -pedantic
 
-LDLIBS = -lnsl -pthread
+LDLIBS = -lnsl
 
 INCLUDES = $(shell echo *.h)
 
@@ -27,8 +27,8 @@ trace: proxy
 %.o: %.c $(INCLUDES)
 	$(CC) $(CFLAGS) -c $< -o $@ $(LDLIBS)
 
-proxy: a1.o
-	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
+proxy: a1.o utils.o connect.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
 
 tcpserver: tcpserver.o
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
