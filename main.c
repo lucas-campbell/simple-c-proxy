@@ -101,6 +101,16 @@ int main(int argc, char *argv[])
         error("ERROR on listen");
 
     /*
+     * Setup for a mapping of client sockets to server sockets. Used for
+     * HTTPS connections.
+     * Initialize all values to a sentinel value. Max value for a file
+     * descriptor when using select is FD_SETSIZE, so we will use this.
+     */
+    int sock_map[FD_SETSIZE];
+    for (int i = 0; i < FD_SETSIZE; i++)
+        sock_map[i] = -1;
+
+    /*
      * Setup for connecting to servers specified by the client
      */
     memset(&hints, 0, sizeof(struct addrinfo));

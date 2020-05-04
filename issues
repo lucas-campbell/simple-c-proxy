@@ -1,2 +1,0 @@
-7. need to fix line 732 where we bcopy extern_serverp->h_addr bc it doesn't
-exist in that struct appparently? Yet it compiles and works

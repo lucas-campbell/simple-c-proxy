@@ -1,0 +1,29 @@
+while(1) {
+    ret = select();
+    for (i:FD_SET_SIZE) { // cycle through sockets read for rdg
+        if (i == parent_sock) {
+            handle_new_request();
+            continue; //continue the FOR loop, go through all ready sockets
+        }
+        // Otherwise we are either returning from a server after a GET request
+        // or continuing a CONNECT tunnel, so forward accordingly
+        forward_packet();
+    }
+}
+
+handle_request() {
+    accept(); // --> new connection
+    //parse_request, http_receive_loop, etc.
+    if (connect_request) {
+        connect_to_server(); //also confirms to client
+        add_to_mapping();
+        return;
+    }
+    //otherwise, setting up for a GET request
+    else { 
+        //maybe process is the same for both branches??
+        connect_to_server();
+        add_to_mapping();
+        return;
+    }
+}

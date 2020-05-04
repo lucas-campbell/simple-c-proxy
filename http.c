@@ -361,58 +361,6 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     }
     freeaddrinfo(result);           /* No longer needed */
 
-    ////connection request to forward editing//////////////////////
-    //// TODO maybe make this a separate func
-    ////char        cpy[request_len]; //for strtok'ing
-    ////char msg_to_fwd[request_len]; //for sending to the server
-    //char        *cpy = malloc(request_len); //for strtok'ing
-    //char *msg_to_fwd = malloc(request_len); //for sending to the server
-    //memset(cpy,        0, request_len);
-    //memset(msg_to_fwd, 0, request_len);
-    //int bytes = 0; //total bytes of msg, updated as copied over
-    //int line_len = 0; //length of each line of request
-    //memcpy(cpy, request, request_len);
-    //char *line = strtok(cpy, "\n");
-    //while (line != NULL) {
-    //    //Proxy-Connection header advised not to be sent in any requests
-    //    char *bad = strstr(line, "Proxy-Connection");
-    //    if (bad == NULL) {
-    //        // TODO some nice pointer math that copies appropriate 
-    //        // bytes from char *request to msg_to_fwd + adds \r, 
-    //        // aka just copying over appropriate header fields.
-    //        // TODO
-    //        // To look at: https://tools.ietf.org/html/rfc7230#appendix-A.1.2
-    //        // https://tools.ietf.org/html/rfc7230#section-5.7.2
-    //        // https://tools.ietf.org/html/rfc7231#section-4.3.6
-    //        line_len = strlen(line);
-    //        memcpy(msg_to_fwd+bytes, line, line_len);
-    //        bytes += line_len;
-    //        msg_to_fwd[bytes] = '\n'; //bc strtok takes out \n
-    //        bytes++;
-    //    }
-    //    line = strtok(NULL, "\n");
-    //}
-    //bytes--;
-
-    ////////////////////////////
-
-    //n_write = write(serverfd, msg_to_fwd, bytes);
-
-    //if (n_write != bytes) {
-    //    fprintf(stderr, "Error forwarding connect request to server\n");
-    //    close(serverfd);
-    //    close(clientfd);
-    //    return;
-    //}
-
-    //n_write = write(serverfd, request, request_len);
-
-    //if (n_write != request_len) {
-    //    fprintf(stderr, "Error forwarding connect request to server\n");
-    //    close(serverfd);
-    //    close(clientfd);
-    //    return;
-    //}
     // TODO free this?
     msg_buf = malloc(START_BUFSIZE);
     memset(msg_buf, 0, START_BUFSIZE);
@@ -420,7 +368,6 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
 
     //send HTTP 200 confirmation response back to client
     char *success = "HTTP/1.1 200 OK\r\n\r\n";
-    //msg_buf = malloc(sizeof(START_BUFSIZE));
     memcpy(msg_buf, success, strlen(success));
     msg_buf[strlen(success)] = '\0';
     n_write = write(clientfd, msg_buf, strlen(msg_buf));
@@ -428,6 +375,7 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
         //TODO fail some other way & close fds
         error("Writing to client failed:");
     }
+    // TODO remove, should be handled anyway in select loop
     //n_read = read(clientfd, msg_buf, START_BUFSIZE);
 
     // loop of:
