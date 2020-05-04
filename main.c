@@ -34,7 +34,8 @@ typedef struct connection_info {
     int serv_size;
 } connection_info;
 
-int handle_new_request(int parentfd, connection_info *ci, int *sock_map);
+int accept_new_connection(int parentfd, connection_info *ci);
+int handle_new_request(int parentfd, connection_info *ci, int *sock_map, ...);
 
 int main(int argc, char *argv[])
 {
@@ -54,7 +55,7 @@ int main(int argc, char *argv[])
     //struct hostent *client_hostp; /* client host info */
     char client_hostname[256];
     char client_servicename[256];
-    char *buf; /* message buffer */
+    //TODO remove char *buf; /* message buffer */
     char *extern_hostname; /* host to connect to */
     int optval; /* flag value for setsockopt */
     int n_read, n_write; /* message byte size */
@@ -196,75 +197,71 @@ int main(int argc, char *argv[])
 //                client_hostname, hostaddrp, client_servicename);
 //#endif
         
-        /* 
-         * read: read input string from the client
-         */
-        int curr_bufsize = START_BUFSIZE;
-        int total_bytes_read, prev_newline_index, content_length, num_header_bytes;
-        bool done, check_newline, content_present;
-        char c;
-        total_bytes_read = prev_newline_index = content_length = num_header_bytes = 0;
-        done = check_newline = content_present = false;
-        buf = malloc(START_BUFSIZE);
-        memset(buf, 0, START_BUFSIZE);
-        //bzero(buf, START_BUFSIZE);
-        // Read until have received entire request
-        while (!done) {
-            http_receive_loop(childfd, &buf, &c, &n_read, &total_bytes_read,
-                                &curr_bufsize, &prev_newline_index, 
-                                &content_length, &num_header_bytes, &done,
-                                &content_present);
-        }
+        ///* 
+        // * read: read input string from the client
+        // */
+        //int curr_bufsize = START_BUFSIZE;
+        //int total_bytes_read, prev_newline_index, content_length, num_header_bytes;
+        //bool done, check_newline, content_present;
+        //char c;
+        //total_bytes_read = prev_newline_index = content_length = num_header_bytes = 0;
+        //done = check_newline = content_present = false;
+        //buf = malloc(START_BUFSIZE);
+        //memset(buf, 0, START_BUFSIZE);
+        ////bzero(buf, START_BUFSIZE);
+        //// Read until have received entire request
+        //while (!done) {
+        //    http_receive_loop(childfd, &buf, &c, &n_read, &total_bytes_read,
+        //                        &curr_bufsize, &prev_newline_index, 
+        //                        &content_length, &num_header_bytes, &done,
+        //                        &content_present);
+        //}
 
         // Once we have full buffer, analyze it and create connection with
         // desired server or report back an error
         // create partially filled request struct to insert into table
-#if TRACE
-        printf("HTTP_LOOP done, parsing buffer now\n");
-#endif
-        server_portno = -1;
-        extern_hostname = NULL;
-        int ret = 0;
-        unsigned long hash_val = 0;
-        ret = parse_request(buf, total_bytes_read,
-                            &extern_hostname, &server_portno, &hash_val);
-        if (ret == -1) {
-            check_and_free(extern_hostname);
-            check_and_free(buf);
-            close(childfd);
-            continue;
-        }
-
-        // If no hostname supplied, close & wait for new connection
-        if (extern_hostname == NULL) {
-            fprintf(stderr, "Error: No hostname supplied in GET request:\n%s\n", buf);
-            //check_and_free(extern_hostname); not needed
-            check_and_free(buf);
-            close(childfd);
-            continue;
-        }
-
-#if TRACE
-        printf("DONE parsing request. Hostname: %s, portno: %d\n",
-                extern_hostname, server_portno);
-#endif
-#if DEBUG
-        printf("Received request:\n%s\n", buf);
-        printf("End of RQ string\n");
-        fflush(NULL);
-#endif
-
-        // if serving a connect request, enter separate loop and continue
-        // indefinitely through there
-        // TODO
-        if (ret == 1) {
-            connect_loop(childfd, extern_hostname, server_portno, hints,
-                            buf, total_bytes_read);
-            check_and_free(extern_hostname);
-            check_and_free(buf);
-            //close_connections(...);
-            continue;
-        }
+//#if TRACE
+//        printf("HTTP_LOOP done, parsing buffer now\n");
+//#endif
+//        server_portno = -1;
+//        extern_hostname = NULL;
+//        int ret = 0;
+//        unsigned long hash_val = 0;
+//        ret = parse_request(buf, total_bytes_read,
+//                            &extern_hostname, &server_portno, &hash_val);
+//        if (ret == -1) {
+//            check_and_free(extern_hostname);
+//            check_and_free(buf);
+//            close(childfd);
+//            continue;
+//        }
+//
+//        // If no hostname supplied, close & wait for new connection
+//        if (extern_hostname == NULL) {
+//            fprintf(stderr, "Error: No hostname supplied in request:\n%s\n", buf);
+//            //check_and_free(extern_hostname); not needed
+//            check_and_free(buf);
+//            close(childfd);
+//            continue;
+//        }
+//
+//#if TRACE
+//        printf("DONE parsing request. Hostname: %s, portno: %d\n",
+//                extern_hostname, server_portno);
+//#endif
+//#if DEBUG
+//        printf("Received request:\n%s\n", buf);
+//        printf("End of RQ string\n");
+//        fflush(NULL);
+//#endif
+//
+//        if (ret == 1) {
+//            connect_loop(childfd, extern_hostname, server_portno, hints,
+//                            buf, total_bytes_read);
+//            check_and_free(extern_hostname);
+//            check_and_free(buf);
+//            continue;
+//        }
         
 
         // Check with Cache_get(cache, key_hash) if ya existe an entry
@@ -352,7 +349,85 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
-int handle_new_request(int parentfd, connection_info *ci, int *sock_map)
+int handle_new_request(int parentfd, connection_info *ci, int *sock_map, ...)
+{
+    int childfd = accept_new_connection(parentfd, ci);
+    
+    /* 
+     * read: read input string from the client
+     */
+    int curr_bufsize = START_BUFSIZE;
+    int n_read, total_bytes_read, prev_newline_index, content_length,
+        num_header_bytes;
+    bool done, check_newline, content_present;
+    char c;
+    n_read = total_bytes_read = prev_newline_index = content_length 
+        = num_header_bytes = 0;
+    done = check_newline = content_present = false;
+    //
+    //TODO decalre/init probably n_write
+    //
+    char *buf = calloc(START_BUFSIZE, 1);
+    // Read until have received entire request
+    while (!done) {
+        http_receive_loop(childfd, &buf, &c, &n_read, &total_bytes_read,
+                            &curr_bufsize, &prev_newline_index, 
+                            &content_length, &num_header_bytes, &done,
+                            &content_present);
+    }
+#if TRACE
+    printf("HTTP_LOOP done, parsing buffer now\n");
+#endif
+    int server_portno = -1;
+    char *extern_hostname = NULL;
+    int parse_ret = 0;
+    unsigned long hash_val = 0;
+    parse_ret = parse_request(buf, total_bytes_read,
+                        &extern_hostname, &server_portno, &hash_val);
+
+    if (parse_ret == -1) {
+        check_and_free(extern_hostname);
+        check_and_free(buf);
+        close(childfd);
+        return;
+    }
+
+    // If no hostname supplied, close & wait for new connection
+    if (extern_hostname == NULL) {
+        fprintf(stderr, "Error: No hostname supplied in request:\n%s\n", buf);
+        //check_and_free(extern_hostname); not needed
+        check_and_free(buf);
+        close(childfd);
+        return;
+    }
+
+#if TRACE
+    printf("DONE parsing request. Hostname: %s, portno: %d\n",
+            extern_hostname, server_portno);
+#endif
+#if DEBUG
+    printf("Received request:\n%s\n", buf);
+    printf("End of RQ string\n");
+    fflush(NULL);
+#endif
+
+    if (parse_ret == 1) {
+        connect_loop(childfd, extern_hostname, server_portno, hints,
+                        buf, total_bytes_read);
+        check_and_free(extern_hostname);
+        check_and_free(buf);
+        return;
+    }
+
+    return childfd;
+}
+
+/*
+ * Given a parent socket and connection_info struct, accept()'s a new connection
+ * from the parentfd.
+ * ci struct should have clientaddr 
+ */
+int accept_new_connection(int parentfd, connection_info *ci)
 {
     /* 
      * accept: wait for a connection request 
@@ -395,3 +470,4 @@ int handle_new_request(int parentfd, connection_info *ci, int *sock_map)
 #endif
         return childfd;
 }
+

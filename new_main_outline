@@ -13,7 +13,7 @@ while(1) {
 
 handle_new_request() {
     accept(); // --> new connection
-    //parse_request, http_receive_loop, etc.
+    //http_receive_loop, parse_request, etc.
     if (connect_request) {
         connect_to_server(); //also confirms to client
         add_to_mapping();
