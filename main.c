@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h> 
-#include <time.h> //time(), struct timeval
+#include <time.h> //time()
 #include <unistd.h> //close, read, write
 
 #include <netdb.h> //struct addrinfo, getnameinfo, etc
@@ -25,6 +25,16 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 
+typedef struct connection_info {
+    struct sockaddr_in *clientaddr;
+    socklen_t clientlen;
+    char *client_hostname;
+    char *client_servicename; 
+    int host_size;
+    int serv_size;
+} connection_info;
+
+int handle_new_request(int parentfd, connection_info *ci, int *sock_map);
 
 int main(int argc, char *argv[])
 {
@@ -34,9 +44,9 @@ int main(int argc, char *argv[])
     int sockfd; /* socket to connect to external server */
     int listen_portno; /* port to listen on */
     int server_portno; /* port to connect to external server on */
-    int clientlen; /* byte size of client's address */
+    // TODO remove int clientlen; /* byte size of client's address */
     struct sockaddr_in this_serveraddr; /* server addrs */
-    //TODO struct sockaddr_in extern_serveraddr; /* server addrs */
+    //TODO remove ?struct sockaddr_in extern_serveraddr; /* server addrs */
     struct sockaddr_in clientaddr; /* client addr */
     //TODO remove struct hostent *extern_serverp; /* client host info */
     struct addrinfo hints;
@@ -45,11 +55,12 @@ int main(int argc, char *argv[])
     char client_hostname[256];
     char client_servicename[256];
     char *buf; /* message buffer */
-    char *hostaddrp; /* dotted decimal host addr string */
     char *extern_hostname; /* host to connect to */
     int optval; /* flag value for setsockopt */
     int n_read, n_write; /* message byte size */
     Cache_T cache = Cache_new(START_CACHE_SIZE); /* proxy cache */
+    // TODO remove clientlen = sizeof(clientaddr);
+    int sr = 0; // select return value
 
     // Check cmd line args
     if (argc != 2) {
@@ -122,55 +133,68 @@ int main(int argc, char *argv[])
     hints.ai_protocol = 0; //any protocol allowed
 
     /* 
+     * TODO re-write this description
      * main loop: wait for a connection request, echo input line, 
      * then close connection.
      */
-    clientlen = sizeof(clientaddr);
+
+    //fd_set active_fd_set, read_fd_set;
+    //struct timeval * tv = NULL;
+    //FD_ZERO (&active_fd_set);
+    //FD_SET (parentfd, &active_fd_set);
+    connection_info ci = {.clientaddr = &clientaddr
+                        , .clientlen = sizeof(clientaddr)
+                        , .client_hostname = &(client_hostname[0])
+                        , .client_servicename = &(client_servicename[0])
+                        , .host_size = sizeof(client_hostname)
+                        , .serv_size = sizeof(client_servicename)
+                        };
     while (1) {
 
-        /* 
-         * accept: wait for a connection request 
-         */
-        childfd = accept(parentfd, (struct sockaddr *) &clientaddr,
-                        (socklen_t *) &clientlen);
-        if (childfd < 0) 
-            error("ERROR on accept");
-        
-        /* 
-         * gethostbyaddr: determine who sent the message, fills in clientaddr
-         * struct
-         */
-        //client_hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, 
-        //                      sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-        memset(client_hostname, 0, sizeof(client_hostname));
-        memset(client_servicename, 0, sizeof(client_servicename));
-        //memset(&clientaddr, 0, clientlen);
-#if TRACE
-        fprintf(stderr, "Before getnameinfo\n");
-#endif
-        int name_info = getnameinfo((struct sockaddr *)&clientaddr, clientlen, client_hostname,
-                    sizeof(client_hostname), client_servicename,
-                    sizeof(client_servicename), 0);
-        if (name_info != 0){
-            if (name_info == EAI_SYSTEM) {
-                perror("System Error during getnameinfo()");
-            }
-            else
-                gai_strerror(name_info);
-        }
-#if TRACE
-        fprintf(stderr, "getnameinfo returned: %d\n", name_info);
-#endif
-        //if (client_hostp == NULL)
-        //    //error("ERROR on gethostbyaddr");
-        //    herror("ERROR on gethostbyaddr");
-        hostaddrp = inet_ntoa(clientaddr.sin_addr);
-        if (hostaddrp == NULL)
-            error("ERROR on inet_ntoa\n");
-#if DEBUG
-        printf("server established connection with %s (%s)\n", 
-                client_hostname, hostaddrp);
-#endif
+        childfd = handle_new_request(parentfd, &ci, sock_map);
+//        /* 
+//         * accept: wait for a connection request 
+//         */
+//        childfd = accept(parentfd, (struct sockaddr *) &clientaddr,
+//                        (socklen_t *) &clientlen);
+//        if (childfd < 0) 
+//            error("ERROR on accept");
+//        
+//        /* 
+//         * gethostbyaddr: determine who sent the message, fills in clientaddr
+//         * struct
+//         */
+//        //client_hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, 
+//        //                      sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+//        memset(client_hostname, 0, sizeof(client_hostname));
+//        memset(client_servicename, 0, sizeof(client_servicename));
+//        //memset(&clientaddr, 0, clientlen);
+//#if TRACE
+//        fprintf(stderr, "Before getnameinfo\n");
+//#endif
+//        int name_info = getnameinfo((struct sockaddr *)&clientaddr, clientlen, client_hostname,
+//                    sizeof(client_hostname), client_servicename,
+//                    sizeof(client_servicename), 0);
+//        if (name_info != 0){
+//            if (name_info == EAI_SYSTEM) {
+//                perror("System Error during getnameinfo()");
+//            }
+//            else
+//                gai_strerror(name_info);
+//        }
+//#if TRACE
+//        fprintf(stderr, "getnameinfo returned: %d\n", name_info);
+//#endif
+//        //if (client_hostp == NULL)
+//        //    //error("ERROR on gethostbyaddr");
+//        //    herror("ERROR on gethostbyaddr");
+//        hostaddrp = inet_ntoa(clientaddr.sin_addr);
+//        if (hostaddrp == NULL)
+//            error("ERROR on inet_ntoa\n");
+//#if DEBUG
+//        printf("server established connection. Host: %s (%s), service name: %s\n", 
+//                client_hostname, hostaddrp, client_servicename);
+//#endif
         
         /* 
          * read: read input string from the client
@@ -226,6 +250,8 @@ int main(int argc, char *argv[])
 #endif
 #if DEBUG
         printf("Received request:\n%s\n", buf);
+        printf("End of RQ string\n");
+        fflush(NULL);
 #endif
 
         // if serving a connect request, enter separate loop and continue
@@ -324,4 +350,48 @@ int main(int argc, char *argv[])
     Cache_free(cache);
 
     return EXIT_SUCCESS;
+}
+
+int handle_new_request(int parentfd, connection_info *ci, int *sock_map)
+{
+    /* 
+     * accept: wait for a connection request 
+     */
+    int childfd = accept(parentfd, (struct sockaddr *) (ci->clientaddr),
+                        &(ci->clientlen));
+    if (childfd < 0) 
+        //TODO error another way
+        error("ERROR on accept");
+    
+    memset(ci->client_hostname, 0, ci->host_size);
+    memset(ci->client_servicename, 0, ci->serv_size);
+#if TRACE
+    fprintf(stderr, "Before getnameinfo\n");
+#endif
+    /* 
+     * getnameinfo: determine who sent the message, fills in clientaddr struct
+     */
+    int name_info = getnameinfo((struct sockaddr *)(ci->clientaddr),
+            ci->clientlen, ci->client_hostname,
+                ci->host_size, ci->client_servicename,
+                ci->serv_size, 0);
+    if (name_info != 0) {
+        if (name_info == EAI_SYSTEM) {
+            perror("System Error during getnameinfo()");
+        }
+        else
+            gai_strerror(name_info);
+    }
+#if TRACE
+    fprintf(stderr, "getnameinfo returned: %d\n", name_info);
+#endif
+        char *hostaddrp = inet_ntoa(ci->clientaddr->sin_addr);
+        if (hostaddrp == NULL)
+            //TODO error cleanup
+            error("ERROR on inet_ntoa\n");
+#if DEBUG
+        printf("server established connection. Host: %s (%s), service name: %s\n", 
+                ci->client_hostname, hostaddrp, ci->client_servicename);
+#endif
+        return childfd;
 }

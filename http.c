@@ -257,6 +257,7 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
         error("ERROR reading from socket");
     if (*n_read == 0) {
         *done = true;
+        (*buf)[*total_bytes_read] = '\0';
         return;
     }
 //#if TRACE
@@ -277,6 +278,7 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
             if (!(*content_present)) {
                 // 2 CRLFs + no content --> done reading
                 *done = true;
+                (*buf)[*total_bytes_read] = '\0';
                 return;
             }
             else {
@@ -297,8 +299,10 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
         *prev_newline_index = *total_bytes_read-1;
     }
     if (*total_bytes_read == *num_header_bytes + *content_length &&
-            *num_header_bytes != 0) //extra check, in case v long header
+            *num_header_bytes != 0){ //extra check, in case v long header
         *done = true;
+        (*buf)[*total_bytes_read] = '\0';
+    }
 }
 
 /*
@@ -474,4 +478,28 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     printf("End of connect_loop()\n");
 #endif
     return;
+}
+
+/*
+ * Forwards a packet to its socket pair according to the socket mapping
+ * in the array sock_map.
+ * Returns:
+ * 0 on success
+ * -1 if given an invalid from_fd file descriptor
+ * -2 if writing to the corresponding fd failed.
+ */
+int forward_packet(int from_fd, char *pkt, size_t len, int *sock_map)
+{
+    if (from_fd > FD_SETSIZE-1) {
+        close(from_fd);
+        return -1;
+    }
+    int to_fd = sock_map[from_fd];
+    int n_write = write(to_fd, pkt, len);
+    //TODO maybe check that n_write == len as well
+    if (n_write == -1) {
+        perror("Could not write");
+        return -2;
+    }
+    return 0;
 }

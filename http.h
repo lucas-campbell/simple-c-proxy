@@ -21,4 +21,6 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
 
 void connect_loop(int clientfd, char *server_hostname, int server_portno,
                   struct addrinfo hints, char *request, int request_len);
+int forward_packet(int from_fd, char *pkt, size_t len, int *sock_map);
+
 #endif //HTTP_H

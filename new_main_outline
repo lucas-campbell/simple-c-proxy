@@ -11,7 +11,7 @@ while(1) {
     }
 }
 
-handle_request() {
+handle_new_request() {
     accept(); // --> new connection
     //parse_request, http_receive_loop, etc.
     if (connect_request) {

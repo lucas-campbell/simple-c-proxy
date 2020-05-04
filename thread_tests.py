@@ -76,7 +76,7 @@ def main():
             q.put(None)
         for t in threads:
             t.join()
-        print('All work completed')
+        print('All work completed.')
 
         if len(cases_info.passed) == cases_info.num_cases:
             print('All tests passed.')
