@@ -12,7 +12,7 @@ cases_info = Cases_Info()
 num_threads = 4
 keep_working = True
 tests = ['alexa.txt']
-num_sites = 100 if len(sys.argv) == 1 else sys.argv[1]
+num_sites = 100 if len(sys.argv) == 1 else int(sys.argv[1])
 
 
 def worker():
@@ -29,6 +29,26 @@ def worker():
     except KeyboardInterrupt: 
         _thread.interrupt_main()
         return
+
+def do_work(info):
+    f = info[0]
+    case = info[1]
+    reg = '{}'.format(case)
+    if len(sys.argv) > 2:
+        proxy = '{} -x {}:{}'.format(case, sys.argv[2], portno)
+    else:
+        proxy = '{} -x localhost:{}'.format(case, portno)
+    reg = subprocess.run(['curl', '-s', reg], stdout=subprocess.PIPE)
+    proxy = subprocess.run(['curl', '-s'] + proxy.split(), stdout=subprocess.PIPE)
+    if reg.returncode == 0 and proxy.returncode != 0 or \
+        reg.stdout != proxy.stdout:
+        #failed.append(f + ' : ' + case) #non-threaded version
+        cases_info.add_failed(f + ' : ' + case)
+    else:
+        #print(proxy.stdout)
+        #passed.append(f + ' : ' + case)
+        cases_info.add_passed(f + ' : ' + case)
+    #num_cases += 1 #not needed, done in add methods
 
 def main():
     try:

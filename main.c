@@ -302,8 +302,6 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map,
 #if TRACE
     printf("DONE parsing request. Hostname: %s, portno: %d\n",
             extern_hostname, server_portno);
-#endif
-#if DEBUG
     printf("Received request:\n%s\n", buf);
     printf("End of RQ string\n");
     fflush(NULL);

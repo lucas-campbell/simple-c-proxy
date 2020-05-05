@@ -24,3 +24,5 @@
     then cache it. This can be packet by packet or all at once, but still
     want to store the repsonse.
     CONNECT pkts are forwarded right away.
+
+7. Handle chunked encoding
