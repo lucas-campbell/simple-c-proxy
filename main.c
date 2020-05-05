@@ -11,6 +11,7 @@
 #include "utils.h"
 #include "cache.h"
 #include "http.h"
+#include "waiting_set.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,30 +36,33 @@ typedef struct accept_info {
 } accept_info;
 
 int accept_new_connection(int parentfd, accept_info *ai);
-void handle_client_request(int parentfd, accept_info *ai, int *sock_map, ...);
-int forward_packet(int from_fd, int *sock_map);
+void handle_client_request(int parentfd, accept_info *ai, int *sock_map,
+                            Cache_T cache, fd_set *fds);
+int forward_packet(int from_fd, int to_fd, int *sock_map, fd_set *fds);
+void add_to_mapping (int clientfd, int serverfd, int *sock_map);
+void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *fds);
 
 int main(int argc, char *argv[])
 {
     ////////////// Server Variables //////////////
     int parentfd; /* parent socket */
-    int childfd; /* child socket */
-    int sockfd; /* socket to connect to external server */
+    //TODO int childfd; /* child socket */
+    //TODO int sockfd; /* socket to connect to external server */
     int listen_portno; /* port to listen on */
-    int server_portno; /* port to connect to external server on */
+    //TODO int server_portno; /* port to connect to external server on */
     // TODO remove int clientlen; /* byte size of client's address */
     struct sockaddr_in this_serveraddr; /* server addrs */
     //TODO remove ?struct sockaddr_in extern_serveraddr; /* server addrs */
     struct sockaddr_in clientaddr; /* client addr */
     //TODO remove struct hostent *extern_serverp; /* client host info */
-    struct addrinfo *result, *rp;
-    //struct hostent *client_hostp; /* client host info */
+    //TODO struct addrinfo *result, *rp;
+    //TODO struct hostent *client_hostp; /* client host info */
     char client_hostname[256];
     char client_servicename[256];
     //TODO remove char *buf; /* message buffer */
-    char *extern_hostname; /* host to connect to */
+    //TODO char *extern_hostname; /* host to connect to */
     int optval; /* flag value for setsockopt */
-    int n_read, n_write; /* message byte size */
+    //int n_read, n_write; /* message byte size */
     Cache_T cache = Cache_new(START_CACHE_SIZE); /* proxy cache */
     // TODO remove clientlen = sizeof(clientaddr);
     int sr = 0; // select return value
@@ -148,17 +152,20 @@ int main(int argc, char *argv[])
             exit (EXIT_FAILURE);
         }
         for (int i = 0; i < FD_SETSIZE; i++) {
-            if (i == parentfd) {
-                handle_client_request(parentfd, &ai, sock_map);
-                //continues for loop, read through all sockets with ready data
-                continue; 
+            if (FD_ISSET(i, &read_fd_set)) {
+                if (i == parentfd) {
+                    handle_client_request(parentfd, &ai, sock_map, cache, &active_fd_set);
+                    //continues for loop, read through all sockets with ready data
+                    continue; 
+                }
+                // Otherwise we are either returning from a server after a GET
+                // request or continuing a CONNECT tunnel, so forward accordingly
+                else {
+                    handle_incoming_message(i, sock_map, cache, &active_fd_set);
+                }
             }
-            // Otherwise we are either returning from a server after a GET
-            // request or continuing a CONNECT tunnel, so forward accordingly
-            forward_packet(i, sock_map);
-
         }
-
+    }
         //// Check with Cache_get(cache, key_hash) if ya existe an entry
         //KV_Pair_T response = Cache_get(cache, hash_val);
         ////  if ya existe:
@@ -167,91 +174,91 @@ int main(int argc, char *argv[])
         //    send_response(childfd, response);
         //}
         //  else get fresh one (set up connxn w/server)
-        else {
-            /* Set up connection using desired host/port */
-            char srv_portno[6]; //maximum of 65,535 ports
-            memset(srv_portno, 0, 6);
-            sprintf(srv_portno, "%d", server_portno); //adds null
-	    int s = getaddrinfo(extern_hostname, srv_portno, &hints, &result);
-            if (s != 0) {
-                fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
-                exit(EXIT_FAILURE);
-            }
-            /* getaddrinfo() returns a list of address structures.
-              Try each address until we successfully connect(2).
-              If socket(2) (or connect(2)) fails, we (close the socket
-              and) try the next address. */
-            for (rp = result; rp != NULL; rp = rp->ai_next) {
-                sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-                if (sockfd == -1)
-                    continue;
-                if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
-                    break;                  /* Success */
-                close(sockfd);
-            }
-            if (rp == NULL) {               /* No address succeeded */
-                fprintf(stderr, "Could not connect during GET\n");
-                //TODO don't fail here, restart!
-                exit(EXIT_FAILURE);
-            }
-            freeaddrinfo(result);           /* No longer needed */
+        //else {
+        //    /* Set up connection using desired host/port */
+        //    char srv_portno[6]; //maximum of 65,535 ports
+        //    memset(srv_portno, 0, 6);
+        //    sprintf(srv_portno, "%d", server_portno); //adds null
+	//    int s = getaddrinfo(extern_hostname, srv_portno, &hints, &result);
+        //    if (s != 0) {
+        //        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        //        exit(EXIT_FAILURE);
+        //    }
+        //    /* getaddrinfo() returns a list of address structures.
+        //      Try each address until we successfully connect(2).
+        //      If socket(2) (or connect(2)) fails, we (close the socket
+        //      and) try the next address. */
+        //    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        //        sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        //        if (sockfd == -1)
+        //            continue;
+        //        if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
+        //            break;                  /* Success */
+        //        close(sockfd);
+        //    }
+        //    if (rp == NULL) {               /* No address succeeded */
+        //        fprintf(stderr, "Could not connect during GET\n");
+        //        //TODO don't fail here, restart!
+        //        exit(EXIT_FAILURE);
+        //    }
+        //    freeaddrinfo(result);           /* No longer needed */
 
-            //Write the GET request ourselves to the server
-            n_write = write(sockfd, buf, total_bytes_read);
-            (void)n_write;
+        //    //Write the GET request ourselves to the server
+        //    n_write = write(sockfd, buf, total_bytes_read);
+        //    (void)n_write;
 
-            /* Now, reading back response from requested server */
+        //    /* Now, reading back response from requested server */
 
-            //zero out the buffer before reading back from external server
-            bzero(buf, total_bytes_read);
-            total_bytes_read = prev_newline_index =
-                    content_length = num_header_bytes = 0;
-            done = check_newline = content_present = false;
-            // Read until have received entire request
-            while (!done) {
-                http_receive_loop(sockfd, &buf, &c, &n_read, &total_bytes_read,
-                                    &curr_bufsize, &prev_newline_index, 
-                                    &content_length, &num_header_bytes, &done,
-                                    &content_present);
-            } //now, have supposedly received entire HTTP response from server
+        //    //zero out the buffer before reading back from external server
+        //    bzero(buf, total_bytes_read);
+        //    total_bytes_read = prev_newline_index =
+        //            content_length = num_header_bytes = 0;
+        //    done = check_newline = content_present = false;
+        //    // Read until have received entire request
+        //    while (!done) {
+        //        http_receive_loop(sockfd, &buf, &c, &n_read, &total_bytes_read,
+        //                            &curr_bufsize, &prev_newline_index, 
+        //                            &content_length, &num_header_bytes, &done,
+        //                            &content_present);
+        //    } //now, have supposedly received entire HTTP response from server
 
-            //create & fill in kvp struct
-            KV_Pair_T response = malloc(sizeof(struct KV_Pair_T));
-            response->val = malloc(sizeof(struct Val_T));
+        //    //create & fill in kvp struct
+        //    KV_Pair_T response = malloc(sizeof(struct KV_Pair_T));
+        //    response->val = malloc(sizeof(struct Val_T));
 
-            response->priority = -1;
-            response->hash_val = hash_val;
-            response->put_date = -1;
-            
-            parse_response(buf, total_bytes_read, response);
+        //    response->priority = -1;
+        //    response->hash_val = hash_val;
+        //    response->put_date = -1;
+        //    
+        //    parse_response(buf, total_bytes_read, response);
 
-            response->put_date = time(NULL);
+        //    response->put_date = time(NULL);
 
-            Cache_put(cache, response);
-        
-            send_response(childfd, response);
+        //    Cache_put(cache, response);
+        //
+        //    send_response(childfd, response);
 
-            close(sockfd);
-            //Cache_print(cache);
-        }
-        free(extern_hostname);
-        free(buf);
-        close(childfd);
-    }
+        //    close(sockfd);
+        //    //Cache_print(cache);
+        //}
+    //    free(extern_hostname);
+    //    free(buf);
+    //    close(childfd);
+    //}
 
     Cache_free(cache);
 
     return EXIT_SUCCESS;
 }
 
-void handle_client_request(int parentfd, accept_info *ai, int *sock_map, Cache_T cache)
+void handle_client_request(int parentfd, accept_info *ai, int *sock_map,
+                            Cache_T cache, fd_set *fds)
 {
-    int childfd = accept_new_connection(parentfd, ai);
+    int clientfd = accept_new_connection(parentfd, ai);
     
     /* 
      * read: read input string from the client
      */
-    int curr_bufsize = START_BUFSIZE;
     int n_read, total_bytes_read, prev_newline_index, content_length,
         num_header_bytes;
     bool done, check_newline, content_present;
@@ -259,13 +266,11 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map, Cache_T
     n_read = total_bytes_read = prev_newline_index = content_length 
         = num_header_bytes = 0;
     done = check_newline = content_present = false;
-    //
-    //TODO decalre/init probably n_write
-    //
     char *buf = calloc(START_BUFSIZE, 1);
+    int curr_bufsize = START_BUFSIZE;
     // Read until have received entire request
     while (!done) {
-        http_receive_loop(childfd, &buf, &c, &n_read, &total_bytes_read,
+        http_receive_loop(clientfd, &buf, &c, &n_read, &total_bytes_read,
                             &curr_bufsize, &prev_newline_index, 
                             &content_length, &num_header_bytes, &done,
                             &content_present);
@@ -284,14 +289,14 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map, Cache_T
     if (ret == -1) {
         check_and_free(extern_hostname);
         check_and_free(buf);
-        close(childfd);
+        close(clientfd);
         return;
     }
     if (extern_hostname == NULL) { //Clients must specify a hostname
         fprintf(stderr, "Error: No hostname supplied in request:\n%s\n", buf);
         //check_and_free(extern_hostname); not needed
         check_and_free(buf);
-        close(childfd);
+        close(clientfd);
         return;
     }
 #if TRACE
@@ -307,10 +312,10 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map, Cache_T
     KV_Pair_T response = Cache_get(cache, hash_val);
     if (response != NULL) {
         //update Age & write response to client
-        send_response(childfd, response);
+        send_response(clientfd, response);
         free(extern_hostname);
         free(buf);
-        close(childfd);
+        close(clientfd);
         return;
     }
 
@@ -324,17 +329,28 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map, Cache_T
     hints.ai_flags = 0; 
     hints.ai_protocol = 0; //any protocol allowed
 
-    connect_info ci = {.hints = &hints,
-                        .srv_hostname = extern_hostname,
-                        .srv_portno = server_portno,
-                        .connect_request = (ret == 1)
-                        }; 
+    //TODO initialize sfd here?
+    connect_info ci = {0};
+    ci.hints = &hints;
+    ci.srv_hostname = extern_hostname;
+    ci.srv_portno = server_portno;
+    ci.connect_request = (ret == 1);
+    // if dealing GET request, make sure to note that in set of waiting fds
+    // and add the GET request & len info to fwd to server
+    if (!(ci.connect_request)) {
+        ci.the_request = buf;
+        ci.request_len = total_bytes_read;
+        ADD_WAITING(clientfd, hash_val);
+    }
+
     // Set up connection with desired server
     if (connect_to_server(clientfd, &ci) == 0)
         // create pairing in sock_map array
-        add_to_mapping(clientfd, ci->sfd, sock_map);
+        add_to_mapping(clientfd, ci.sfd, sock_map);
     check_and_free(extern_hostname);
     check_and_free(buf);
+    FD_SET(clientfd, fds);
+    FD_SET(ci.sfd, fds);
     return;
 }
 
@@ -395,12 +411,20 @@ void add_to_mapping (int clientfd, int serverfd, int *sock_map)
         fprintf(stderr, "Error adding to socket mappings\n");
         exit(EXIT_FAILURE);
     }
-    sock_map[client_fd] = serverfd;
-    sock_map[server_fd] = clientfd;
+
+    sock_map[clientfd] = serverfd;
+    sock_map[serverfd] = clientfd;
 }
 
-//TODO document return vals
-int forward_packet(int from_fd, int *sock_map)
+/*
+ * Forwards a packet to its socket pair according to the socket mapping
+ * in the array sock_map.
+ * Returns:
+ * 0 on success
+ * -1 if failed to read packet for forwarding
+ * -2 if writing to the corresponding fd failed.
+ */
+int forward_packet(int from_fd, int to_fd, int *sock_map, fd_set *fds)
 {
     char buf[PACKET_SIZE];
     memset(buf, 0, PACKET_SIZE);
@@ -410,7 +434,7 @@ int forward_packet(int from_fd, int *sock_map)
         perror("Reading from socket");
         return -1;
     }
-    int to_fd = sock_map[from_fd];
+
     if (to_fd == -1) {
         fprintf(stderr, "No buddy to forward to :(\n");
         return -2;
@@ -420,6 +444,8 @@ int forward_packet(int from_fd, int *sock_map)
         close(to_fd);
         sock_map[from_fd] = -1;
         sock_map[to_fd] = -1;
+        FD_CLR(from_fd, fds);
+        FD_CLR(to_fd, fds);
         return 0;
     }
     int n_write = write(to_fd, buf, n_read);
@@ -428,4 +454,72 @@ int forward_packet(int from_fd, int *sock_map)
         return -2;
     }
     return 0;
+}
+
+//TODO replace exits with returns
+void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *fds)
+{
+    if (from_fd < 0 || from_fd > FD_SETSIZE) {
+        fprintf(stderr, "Error handling incoming message\n");
+        exit(EXIT_FAILURE);
+    }
+    int to_fd = sock_map[from_fd];
+    if (to_fd == -1) {
+        fprintf(stderr, "Error with socket mappings\n");
+        exit(EXIT_FAILURE);
+    }
+    //Check if fd returning from a GET request
+    if (!IS_WAITING(to_fd)) {
+        //We must be forwarding some part of a CONNECT tunnel
+        forward_packet(from_fd, to_fd, sock_map, fds);
+        return;
+    }
+
+    // We're receiving a response for a GET request, so pull up the hash for it
+    unsigned long h = WAITING_HASH(to_fd);
+    
+    int n_read, total_bytes_read, prev_newline_index, content_length,
+        num_header_bytes;
+    bool done, check_newline, content_present;
+    char c;
+    n_read = total_bytes_read = prev_newline_index = content_length 
+        = num_header_bytes = 0;
+    done = check_newline = content_present = false;
+    char *buf = calloc(START_BUFSIZE, 1);
+    int curr_bufsize = START_BUFSIZE;
+    // Read until have received entire request
+    while (!done) {
+        http_receive_loop(from_fd, &buf, &c, &n_read, &total_bytes_read,
+                            &curr_bufsize, &prev_newline_index, 
+                            &content_length, &num_header_bytes, &done,
+                            &content_present);
+    } //now, have supposedly received entire HTTP response from server
+
+    //create & fill in kvp struct
+    KV_Pair_T response = malloc(sizeof(struct KV_Pair_T));
+    response->val = malloc(sizeof(struct Val_T));
+
+    response->priority = -1;
+    response->hash_val = h;
+    response->put_date = -1;
+    
+    parse_response(buf, total_bytes_read, response);
+
+    response->put_date = time(NULL);
+
+    Cache_put(cache, response);
+
+    send_response(to_fd, response);
+
+    //TODO respect Connection: Keep-Alive headers and don't close sockets?
+    //might complicate things a LOT
+    close(to_fd);
+    close(from_fd);
+    sock_map[to_fd] = -1;
+    sock_map[from_fd] = -1;
+    REMOVE_WAITING(to_fd);
+    FD_CLR(from_fd, fds);
+    FD_CLR(to_fd, fds);
+    //Cache_print(cache);
+    return;
 }

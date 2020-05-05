@@ -9,6 +9,8 @@
 typedef struct connect_info {
     struct addrinfo *hints;
     char *srv_hostname;
+    char *the_request;
+    int request_len;
     int srv_portno;
     bool connect_request;
     int sfd;

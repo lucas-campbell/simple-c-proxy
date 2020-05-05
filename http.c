@@ -479,42 +479,12 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
 }
 
 /*
- * Forwards a packet to its socket pair according to the socket mapping
- * in the array sock_map.
- * Returns:
- * 0 on success
- * -1 if given an invalid from_fd file descriptor
- * -2 if writing to the corresponding fd failed.
- */
-int forward_packet(int from_fd, char *pkt, size_t len, int *sock_map)
-{
-    if (from_fd > FD_SETSIZE-1 || from_fd < 0) {
-        //close(from_fd);
-        return -1;
-    }
-    int to_fd = sock_map[from_fd];
-    if (to_fd == -1) {
-        fprintf(stderr, "Error finding fd to forward packet to\n");
-        close(from_fd);
-        sock_map[from_fd] = -1;
-        return -1;
-    }
-    int n_write = write(to_fd, pkt, len);
-    //TODO maybe check that n_write == len as well
-    if (n_write == -1) {
-        perror("Could not write");
-        return -2;
-    }
-    return 0;
-}
-
-/*
  * Connects to a desired resource indicated by connect_info struct *ci.
  * fd associated with connected server is put in ci->sfd
  *
  * Return values:
  *  0: All ok, should call add_to_mapping() next
- *  -1: problem connecting to server
+ *  -1: problem communicating to server
  *  -2: could not write confirmation to client
  */
 int connect_to_server(int clientfd, struct connect_info *ci)
@@ -525,7 +495,7 @@ int connect_to_server(int clientfd, struct connect_info *ci)
     /* Connect to desired server */
     struct addrinfo *result, *rp; 
     int serverfd; //fd for comms with server
-    int n_write, n_read;
+    int n_write;
     char *msg_buf;
 
     /* Set up connection using desired host/port */
@@ -561,19 +531,31 @@ int connect_to_server(int clientfd, struct connect_info *ci)
     }
     freeaddrinfo(result);           /* No longer needed */
 
-    /* Send confirmation to client */
-    msg_buf = malloc(START_BUFSIZE);
-    memset(msg_buf, 0, START_BUFSIZE);
-    char *success = "HTTP/1.1 200 OK\r\n\r\n";
-    memcpy(msg_buf, success, strlen(success));
-    msg_buf[strlen(success)] = '\0';
-    n_write = write(clientfd, msg_buf, strlen(msg_buf));
-    if (n_write == -1) {
-        perror("Writing to client failed:");
-        free(msg_buf);
-        close(clientfd);
-        return -2;
+    if (ci->connect_request) {
+        /* Send confirmation to client */
+        msg_buf = malloc(START_BUFSIZE);
+        memset(msg_buf, 0, START_BUFSIZE);
+        char *success = "HTTP/1.1 200 OK\r\n\r\n";
+        memcpy(msg_buf, success, strlen(success));
+        msg_buf[strlen(success)] = '\0';
+        n_write = write(clientfd, msg_buf, strlen(msg_buf));
+        if (n_write == -1) {
+            perror("Writing to client failed:");
+            free(msg_buf);
+            close(clientfd);
+            return -2;
+        }
     }
+    else {
+        n_write = write(serverfd, ci->the_request, ci->request_len);
+        if (n_write == -1) {
+            perror("Writing GET request to server");
+            return -1;
+        }
+        //no need to ADD_WAITING(), was already done before this function 
+        //if necessary in handle_client_request logic
+    }
+
     ci->sfd = serverfd;
     return 0;
 }
