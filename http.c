@@ -66,7 +66,11 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
         line = strtok(NULL, "\n");
     }
 #if DEBUG
-    printf("parsed %s request: %s\n", (ret == 1)?"CONNECT":"GET", buf);
+    char *type;
+    if (ret == 1) type = "CONNECT";
+    else if (ret == 0) type = "GET";
+    else type = "UNKOWN";
+    printf("parsed %s request: %s\n", type, buf);
     if (*hostname != NULL)
         printf("Got host: %s, set portno to %d\n", *hostname, *portno);
 #endif
@@ -528,7 +532,7 @@ int connect_to_server(int clientfd, struct connect_info *ci)
     char server_portno[6]; //maximum of 65,535 ports
     memset(server_portno, 0, 6);
     sprintf(server_portno, "%d", ci->srv_portno); //adds null
-    int s = getaddrinfo(ci->srv_hostname, server_portno, &(ci->hints), &result);
+    int s = getaddrinfo(ci->srv_hostname, server_portno, ci->hints, &result);
     if (s != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
         close(clientfd);

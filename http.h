@@ -11,7 +11,7 @@ typedef struct connect_info {
     char *srv_hostname;
     int srv_portno;
     bool connect_request;
-    int *sfd;
+    int sfd;
 } connect_info;
 
 int parse_request(char *buf, int len, char **hostname, int *portno,
@@ -30,6 +30,5 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
 void connect_loop(int clientfd, char *server_hostname, int server_portno,
                   struct addrinfo hints);
 int connect_to_server(int clientfd, struct connect_info *ci);
-int forward_packet(int from_fd, char *pkt, size_t len, int *sock_map);
 
 #endif //HTTP_H

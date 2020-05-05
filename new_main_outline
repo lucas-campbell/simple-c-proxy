@@ -2,13 +2,17 @@ while(1) {
     ret = select();
     for (i:FD_SET_SIZE) { // cycle through sockets read for rdg
         if (i == parent_sock) {
-            handle_new_request();
+            handle_client_request();
             continue; //continue the FOR loop, go through all ready sockets
         }
         // Otherwise we are either returning from a server after a GET request
         // or continuing a CONNECT tunnel, so forward accordingly
         forward_packet();
     }
+}
+forward_packet() {
+    read(); // --> get smol packet , size START_BUFSIZE maybe, or make new constant
+    write();// to corresponding fd. that's it! may cause incomplete http response for a sec, we'll see
 }
 
 handle_new_request() {

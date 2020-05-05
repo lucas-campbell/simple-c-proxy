@@ -159,18 +159,28 @@ int main(int argc, char **argv) {
       /* 
        * write: echo the input string back to the client 
        */
-      char *boi = "HTTP/1.1 200 OK\r\n"
+      char *boi_1 = "HTTP/1.1 200 OK\r\n"
         "xxxfuckyouxxx\r\n"
-        "Content-Length: 10\r\n" //20
-        "poonis\r\n"
+        "Content-Length: 11\r\n"; //20
+      char *boi_2 = "poonis\r\n"
         "\r\n"
         "1234567890";
-      bzero(buf, BUFSIZE);
-      strcpy(buf, boi);
-
-      printf("writing back to proxy?\n");
-      n = write(childfd, boi, strlen(boi));
-      printf("server wrote %d bytes: %s", n, boi);
+      char *boi_3 = "\n";
+      //bzero(buf, BUFSIZE);
+      //strcpy(buf, boi_1);
+      printf("writing back to proxy1\n");
+      n = write(childfd, boi_1, strlen(boi_1));
+      printf("server wrote %d bytes: %s", n, boi_1);
+      if (n < 0) 
+        error("ERROR writing to socket");
+      printf("writing back to proxy2\n");
+      n = write(childfd, boi_2, strlen(boi_2));
+      printf("server wrote %d bytes: %s", n, boi_2);
+      if (n < 0) 
+        error("ERROR writing to socket");
+      printf("writing back to proxy3\n");
+      n = write(childfd, boi_3, strlen(boi_3));
+      printf("server wrote %d bytes: %s", n, boi_3);
       if (n < 0) 
         error("ERROR writing to socket");
 

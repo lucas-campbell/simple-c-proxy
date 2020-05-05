@@ -3,5 +3,6 @@
 
 #define START_BUFSIZE 100
 #define START_CACHE_SIZE 10
+#define PACKET_SIZE 512
 
 #endif //CONSTANTS_INCLUDED
