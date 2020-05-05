@@ -25,17 +25,17 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 
-typedef struct connection_info {
+typedef struct accept_info {
     struct sockaddr_in *clientaddr;
     socklen_t clientlen;
     char *client_hostname;
     char *client_servicename; 
     int host_size;
     int serv_size;
-} connection_info;
+} accept_info;
 
-int accept_new_connection(int parentfd, connection_info *ci);
-int handle_new_request(int parentfd, connection_info *ci, int *sock_map, ...);
+int accept_new_connection(int parentfd, accept_info *ai);
+int handle_new_request(int parentfd, accept_info *ai, int *sock_map, ...);
 
 int main(int argc, char *argv[])
 {
@@ -50,7 +50,6 @@ int main(int argc, char *argv[])
     //TODO remove ?struct sockaddr_in extern_serveraddr; /* server addrs */
     struct sockaddr_in clientaddr; /* client addr */
     //TODO remove struct hostent *extern_serverp; /* client host info */
-    struct addrinfo hints;
     struct addrinfo *result, *rp;
     //struct hostent *client_hostp; /* client host info */
     char client_hostname[256];
@@ -122,17 +121,6 @@ int main(int argc, char *argv[])
     for (int i = 0; i < FD_SETSIZE; i++)
         sock_map[i] = -1;
 
-    /*
-     * Setup for connecting to servers specified by the client
-     */
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC; //IPV4 or IPV6
-    hints.ai_socktype = SOCK_STREAM;
-    // sets flags to (AI_V4MAPPED | AI_ADDRCONFIG)
-    // means returned socket addresses will be suitable for connect()
-    hints.ai_flags = 0; 
-    hints.ai_protocol = 0; //any protocol allowed
-
     /* 
      * TODO re-write this description
      * main loop: wait for a connection request, echo input line, 
@@ -143,7 +131,7 @@ int main(int argc, char *argv[])
     //struct timeval * tv = NULL;
     //FD_ZERO (&active_fd_set);
     //FD_SET (parentfd, &active_fd_set);
-    connection_info ci = {.clientaddr = &clientaddr
+    accept_info ai = {.clientaddr = &clientaddr
                         , .clientlen = sizeof(clientaddr)
                         , .client_hostname = &(client_hostname[0])
                         , .client_servicename = &(client_servicename[0])
@@ -152,7 +140,7 @@ int main(int argc, char *argv[])
                         };
     while (1) {
 
-        childfd = handle_new_request(parentfd, &ci, sock_map);
+        childfd = handle_new_request(parentfd, &ai, sock_map);
 //        /* 
 //         * accept: wait for a connection request 
 //         */
@@ -349,9 +337,9 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
-int handle_new_request(int parentfd, connection_info *ci, int *sock_map, ...)
+int handle_new_request(int parentfd, accept_info *ai, int *sock_map, ...)
 {
-    int childfd = accept_new_connection(parentfd, ci);
+    int childfd = accept_new_connection(parentfd, ai);
     
     /* 
      * read: read input string from the client
@@ -380,12 +368,13 @@ int handle_new_request(int parentfd, connection_info *ci, int *sock_map, ...)
 #endif
     int server_portno = -1;
     char *extern_hostname = NULL;
-    int parse_ret = 0;
+    int ret = 0;
     unsigned long hash_val = 0;
-    parse_ret = parse_request(buf, total_bytes_read,
+    ret = parse_request(buf, total_bytes_read,
                         &extern_hostname, &server_portno, &hash_val);
 
-    if (parse_ret == -1) {
+    //TODO document what this means
+    if (ret == -1) {
         check_and_free(extern_hostname);
         check_and_free(buf);
         close(childfd);
@@ -411,45 +400,57 @@ int handle_new_request(int parentfd, connection_info *ci, int *sock_map, ...)
     fflush(NULL);
 #endif
 
-    if (parse_ret == 1) {
-        connect_loop(childfd, extern_hostname, server_portno, hints,
-                        buf, total_bytes_read);
-        check_and_free(extern_hostname);
-        check_and_free(buf);
-        return;
-    }
+    /* Setup for connecting to servers specified by the client */
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC; //IPV4 or IPV6
+    hints.ai_socktype = SOCK_STREAM;
+    // sets flags to (AI_V4MAPPED | AI_ADDRCONFIG),
+    // means returned socket addresses will be suitable for connect()
+    hints.ai_flags = 0; 
+    hints.ai_protocol = 0; //any protocol allowed
 
+    connect_info ci = {.hints = &hints,
+                        .srv_hostname = extern_hostname,
+                        .srv_portno = server_portno,
+                        .connect_request = (ret == 1)
+                        }; 
+    if (connect_to_server(clientfd, &ci) == 0)
+        add_to_mapping(clientfd, serverfd, sock_map);
+    check_and_free(extern_hostname);
+    check_and_free(buf);
+    //TODO just return
     return childfd;
 }
 
 /*
- * Given a parent socket and connection_info struct, accept()'s a new connection
+ * Given a parent socket and accept_info struct, accept()'s a new connection
  * from the parentfd.
- * ci struct should have clientaddr 
+ * ai struct should have clientaddr 
  */
-int accept_new_connection(int parentfd, connection_info *ci)
+int accept_new_connection(int parentfd, accept_info *ai)
 {
     /* 
      * accept: wait for a connection request 
      */
-    int childfd = accept(parentfd, (struct sockaddr *) (ci->clientaddr),
-                        &(ci->clientlen));
+    int childfd = accept(parentfd, (struct sockaddr *) (ai->clientaddr),
+                        &(ai->clientlen));
     if (childfd < 0) 
         //TODO error another way
         error("ERROR on accept");
     
-    memset(ci->client_hostname, 0, ci->host_size);
-    memset(ci->client_servicename, 0, ci->serv_size);
+    memset(ai->client_hostname, 0, ai->host_size);
+    memset(ai->client_servicename, 0, ai->serv_size);
 #if TRACE
     fprintf(stderr, "Before getnameinfo\n");
 #endif
     /* 
      * getnameinfo: determine who sent the message, fills in clientaddr struct
      */
-    int name_info = getnameinfo((struct sockaddr *)(ci->clientaddr),
-            ci->clientlen, ci->client_hostname,
-                ci->host_size, ci->client_servicename,
-                ci->serv_size, 0);
+    int name_info = getnameinfo((struct sockaddr *)(ai->clientaddr),
+            ai->clientlen, ai->client_hostname,
+                ai->host_size, ai->client_servicename,
+                ai->serv_size, 0);
     if (name_info != 0) {
         if (name_info == EAI_SYSTEM) {
             perror("System Error during getnameinfo()");
@@ -460,14 +461,25 @@ int accept_new_connection(int parentfd, connection_info *ci)
 #if TRACE
     fprintf(stderr, "getnameinfo returned: %d\n", name_info);
 #endif
-        char *hostaddrp = inet_ntoa(ci->clientaddr->sin_addr);
+        char *hostaddrp = inet_ntoa(ai->clientaddr->sin_addr);
         if (hostaddrp == NULL)
             //TODO error cleanup
             error("ERROR on inet_ntoa\n");
 #if DEBUG
         printf("server established connection. Host: %s (%s), service name: %s\n", 
-                ci->client_hostname, hostaddrp, ci->client_servicename);
+                ai->client_hostname, hostaddrp, ai->client_servicename);
 #endif
         return childfd;
 }
 
+void add_to_mapping (int clientfd, int serverfd, int *sock_map)
+{
+    if ((clientfd < 0 || clientfd > FD_SETSIZE) || 
+            (serverfd < 0 || serverfd > FD_SETSIZE))
+    {
+        fprintf(stderr, "Error adding to socket mappings\n");
+        exit(EXIT_FAILURE);
+    }
+    sock_map[client_fd] = serverfd;
+    sock_map[server_fd] = clientfd;
+}

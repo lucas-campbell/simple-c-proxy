@@ -6,6 +6,14 @@
 #include <netdb.h> //struct addrinfo
 #include <stdbool.h>
 
+typedef struct connect_info {
+    struct addrinfo *hints;
+    char *srv_hostname;
+    int srv_portno;
+    bool connect_request;
+    int *sfd;
+} connect_info;
+
 int parse_request(char *buf, int len, char **hostname, int *portno,
                     unsigned long *hash_val);
 
@@ -20,7 +28,8 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
                         bool *content_present);
 
 void connect_loop(int clientfd, char *server_hostname, int server_portno,
-                  struct addrinfo hints, char *request, int request_len);
+                  struct addrinfo hints);
+int connect_to_server(int clientfd, struct connect_info *ci);
 int forward_packet(int from_fd, char *pkt, size_t len, int *sock_map);
 
 #endif //HTTP_H

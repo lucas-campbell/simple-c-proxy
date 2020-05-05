@@ -317,19 +317,13 @@ void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
  * 
  */
 void connect_loop(int clientfd, char *server_hostname, int server_portno,
-                  struct addrinfo hints, char *request, int request_len)
+                  struct addrinfo hints)
 {
 #if TRACE
     printf("Entering connect_loop()\n");
 #endif
-    // TODO remove these params
-    (void)request;
-    (void)request_len;
-    struct addrinfo *result, *rp;
-    //(void)clientfd;
-    //(void)server_hostname;
-    //(void)server_portno;
     // open a socket for connection with desired target
+    struct addrinfo *result, *rp;
     int serverfd; //will be for comms with server
     int n_write, n_read;
     char *msg_buf, *error_msg;
@@ -490,16 +484,92 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
  */
 int forward_packet(int from_fd, char *pkt, size_t len, int *sock_map)
 {
-    if (from_fd > FD_SETSIZE-1) {
-        close(from_fd);
+    if (from_fd > FD_SETSIZE-1 || from_fd < 0) {
+        //close(from_fd);
         return -1;
     }
     int to_fd = sock_map[from_fd];
+    if (to_fd == -1) {
+        fprintf(stderr, "Error finding fd to forward packet to\n");
+        close(from_fd);
+        sock_map[from_fd] = -1;
+        return -1;
+    }
     int n_write = write(to_fd, pkt, len);
     //TODO maybe check that n_write == len as well
     if (n_write == -1) {
         perror("Could not write");
         return -2;
     }
+    return 0;
+}
+
+/*
+ * Connects to a desired resource indicated by connect_info struct *ci.
+ * fd associated with connected server is put in ci->sfd
+ *
+ * Return values:
+ *  0: All ok, should call add_to_mapping() next
+ *  -1: problem connecting to server
+ *  -2: could not write confirmation to client
+ */
+int connect_to_server(int clientfd, struct connect_info *ci)
+{
+#if TRACE
+    printf("Entering connect_to_server()\n");
+#endif
+    /* Connect to desired server */
+    struct addrinfo *result, *rp; 
+    int serverfd; //fd for comms with server
+    int n_write, n_read;
+    char *msg_buf;
+
+    /* Set up connection using desired host/port */
+    char server_portno[6]; //maximum of 65,535 ports
+    memset(server_portno, 0, 6);
+    sprintf(server_portno, "%d", ci->srv_portno); //adds null
+    int s = getaddrinfo(ci->srv_hostname, server_portno, &(ci->hints), &result);
+    if (s != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        close(clientfd);
+        return -1;
+    }
+    /* Connect to desired resource.
+     * getaddrinfo() returns a list of address structures.
+      Try each address until we successfully connect(2).
+      If socket(2) (or connect(2)) fails, we (close the socket
+      and) try the next address. */
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        serverfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (serverfd == -1)
+            continue;
+        if (connect(serverfd, rp->ai_addr, rp->ai_addrlen) != -1)
+            break;                  /* Success */
+        //else
+        close(serverfd);
+    }
+    if (rp == NULL) {               /* No address succeeded */
+        fprintf(stderr, "Could not connect during %s\n",
+                ci->connect_request?"CONNECT":"GET");
+        //TODO adjust sock_map
+        close(clientfd);
+        return -1;
+    }
+    freeaddrinfo(result);           /* No longer needed */
+
+    /* Send confirmation to client */
+    msg_buf = malloc(START_BUFSIZE);
+    memset(msg_buf, 0, START_BUFSIZE);
+    char *success = "HTTP/1.1 200 OK\r\n\r\n";
+    memcpy(msg_buf, success, strlen(success));
+    msg_buf[strlen(success)] = '\0';
+    n_write = write(clientfd, msg_buf, strlen(msg_buf));
+    if (n_write == -1) {
+        perror("Writing to client failed:");
+        free(msg_buf);
+        close(clientfd);
+        return -2;
+    }
+    ci->sfd = serverfd;
     return 0;
 }
