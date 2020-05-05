@@ -18,3 +18,9 @@
     all CONNECT request honly have the authorit-form of the URI
     
 5. Ensure that when close fds replace the corresponding values in sock_map with -1
+
+6. Need some way to differentiate btwn incoming responses to GET and CONNECT
+    requests. If GET, want to store in buffer until have entire response and
+    then cache it. This can be packet by packet or all at once, but still
+    want to store the repsonse.
+    CONNECT pkts are forwarded right away.
