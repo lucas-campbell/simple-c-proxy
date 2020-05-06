@@ -327,28 +327,30 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map,
     hints.ai_flags = 0; 
     hints.ai_protocol = 0; //any protocol allowed
 
-    //TODO initialize sfd here?
     connect_info ci = {0};
     ci.hints = &hints;
     ci.srv_hostname = extern_hostname;
     ci.srv_portno = server_portno;
     ci.connect_request = (ret == 1);
-    // if dealing GET request, make sure to note that in set of waiting fds
-    // and add the GET request & len info to fwd to server
+    // if dealing GET request, add the request & len info to fwd to server
     if (!(ci.connect_request)) {
         ci.the_request = buf;
         ci.request_len = total_bytes_read;
-        ADD_WAITING(clientfd, hash_val);
     }
 
     // Set up connection with desired server
-    if (connect_to_server(clientfd, &ci) == 0)
+    if (connect_to_server(clientfd, &ci) == 0) {
+        // if GET request, note that in set of waiting fds
+        if (!(ci.connect_request)) {
+            ADD_WAITING(clientfd, hash_val);
+        }
         // create pairing in sock_map array
         add_to_mapping(clientfd, ci.sfd, sock_map);
+        FD_SET(clientfd, fds);
+        FD_SET(ci.sfd, fds);
+    }
     check_and_free(extern_hostname);
     check_and_free(buf);
-    FD_SET(clientfd, fds);
-    FD_SET(ci.sfd, fds);
     return;
 }
 

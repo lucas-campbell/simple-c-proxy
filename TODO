@@ -26,3 +26,5 @@
     CONNECT pkts are forwarded right away.
 
 7. Handle chunked encoding
+
+8. make sure don't edit any string literals

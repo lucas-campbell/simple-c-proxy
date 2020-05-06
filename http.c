@@ -363,7 +363,7 @@ void connect_loop(int clientfd, char *server_hostname, int server_portno,
     }
     freeaddrinfo(result);           /* No longer needed */
 
-    // TODO free this?
+    // TODO free this
     msg_buf = malloc(START_BUFSIZE);
     memset(msg_buf, 0, START_BUFSIZE);
     //n_read = read(serverfd, msg_buf, START_BUFSIZE);
@@ -525,7 +525,6 @@ int connect_to_server(int clientfd, struct connect_info *ci)
     if (rp == NULL) {               /* No address succeeded */
         fprintf(stderr, "Could not connect during %s\n",
                 ci->connect_request?"CONNECT":"GET");
-        //TODO adjust sock_map
         close(clientfd);
         return -1;
     }
@@ -533,8 +532,7 @@ int connect_to_server(int clientfd, struct connect_info *ci)
 
     if (ci->connect_request) {
         /* Send confirmation to client */
-        msg_buf = malloc(START_BUFSIZE);
-        memset(msg_buf, 0, START_BUFSIZE);
+        msg_buf = calloc(START_BUFSIZE, 1);
         char *success = "HTTP/1.1 200 OK\r\n\r\n";
         memcpy(msg_buf, success, strlen(success));
         msg_buf[strlen(success)] = '\0';
@@ -542,14 +540,18 @@ int connect_to_server(int clientfd, struct connect_info *ci)
         if (n_write == -1) {
             perror("Writing to client failed:");
             free(msg_buf);
+            close(serverfd);
             close(clientfd);
             return -2;
         }
+        free(msg_buf);
     }
     else {
         n_write = write(serverfd, ci->the_request, ci->request_len);
         if (n_write == -1) {
             perror("Writing GET request to server");
+            close(serverfd);
+            close(clientfd);
             return -1;
         }
         //no need to ADD_WAITING(), was already done before this function 
