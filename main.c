@@ -27,8 +27,10 @@
 #include <sys/select.h>
 
 typedef struct accept_info {
-    struct sockaddr_in *clientaddr;
-    socklen_t clientlen;
+    struct sockaddr_in *clientaddr; //must not be NULL
+    socklen_t clientlen; //should be sizeof(*clientaddr)
+    /* following params for use in getnameinfo(). Must populate
+     * accordingly before call to handle_client_request() */
     char *client_hostname;
     char *client_servicename; 
     int host_size;
@@ -42,29 +44,18 @@ int forward_packet(int from_fd, int to_fd, int *sock_map, fd_set *fds);
 void add_to_mapping (int clientfd, int serverfd, int *sock_map);
 void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *fds);
 
+/* Main Driver */
 int main(int argc, char *argv[])
 {
     ////////////// Server Variables //////////////
     int parentfd; /* parent socket */
-    //TODO int childfd; /* child socket */
-    //TODO int sockfd; /* socket to connect to external server */
     int listen_portno; /* port to listen on */
-    //TODO int server_portno; /* port to connect to external server on */
-    // TODO remove int clientlen; /* byte size of client's address */
     struct sockaddr_in this_serveraddr; /* server addrs */
-    //TODO remove ?struct sockaddr_in extern_serveraddr; /* server addrs */
     struct sockaddr_in clientaddr; /* client addr */
-    //TODO remove struct hostent *extern_serverp; /* client host info */
-    //TODO struct addrinfo *result, *rp;
-    //TODO struct hostent *client_hostp; /* client host info */
     char client_hostname[256];
     char client_servicename[256];
-    //TODO remove char *buf; /* message buffer */
-    //TODO char *extern_hostname; /* host to connect to */
     int optval; /* flag value for setsockopt */
-    //int n_read, n_write; /* message byte size */
     Cache_T cache = Cache_new(START_CACHE_SIZE); /* proxy cache */
-    // TODO remove clientlen = sizeof(clientaddr);
     int sr = 0; // select return value
 
     // Check cmd line args
@@ -113,23 +104,39 @@ int main(int argc, char *argv[])
     /* 
      * listen: make this socket ready to accept connection requests
      */
-    if (listen(parentfd, 20) < 0) /* allow 20 requests to queue up */ 
+    /* allow 20 requests to queue up, although that value may get silently
+     * overridden to 5 */ 
+    if (listen(parentfd, 20) < 0) 
         error("ERROR on listen");
 
     /*
-     * Setup for a mapping of client sockets to server sockets. Used for
-     * HTTPS connections.
+     * Setup for a mapping of client sockets to server sockets. 
      * Initialize all values to a sentinel value. Max value for a file
-     * descriptor when using select is FD_SETSIZE, so we will use this.
+     * descriptor when using select is FD_SETSIZE, so we will use -1.
      */
     int sock_map[FD_SETSIZE];
     for (int i = 0; i < FD_SETSIZE; i++)
         sock_map[i] = -1;
 
     /* 
-     * TODO re-write this description
-     * main loop: wait for a connection request, echo input line, 
-     * then close connection.
+     * main loop logic: cycle through list of open file descriptors, and check
+     * which of them are ready for reading.
+     * For each ready fd:
+     *   If it is the one we are listening on (parent socket):
+     *     1) accept the new connection, and
+     *     2) determine if it is for a GET (HTTP) or CONNECT (HTTPS) request (if
+     *     it is neither, close the connection). Create a connection with the
+     *     requested host server. Then
+     *       a) if GET, check program cache to see if stored data available. If
+     *       so, send with this. Otherwise, forward the request and add the new
+     *       client to a set of "waiting" file descriptors
+     *       b) if CONNECT, send confirmation (HTTP 200) back to client after
+     *       connecting to requested server
+     *  Else, determine if fd is responding to a previously sent GET request
+     *  or continuing part of a CONNECT tunnel.
+     *    1) if responding to GET, update cache and send response to client
+     *    2) otherwise, forward the data through to the other side of the
+     *    CONNECT tunnel
      */
 
     accept_info ai = {.clientaddr = &clientaddr
@@ -140,13 +147,12 @@ int main(int argc, char *argv[])
                         , .serv_size = sizeof(client_servicename)
                         };
     fd_set active_fd_set, read_fd_set;
-    struct timeval * tv = NULL;
     FD_ZERO (&active_fd_set);
     FD_SET (parentfd, &active_fd_set);
 
     for (;;) {
         read_fd_set = active_fd_set;
-        sr = select(FD_SETSIZE, &read_fd_set, NULL, NULL, tv);
+        sr = select(FD_SETSIZE, &read_fd_set, NULL, NULL, NULL);
         if (sr < 0) {
             perror("select");
             exit (EXIT_FAILURE);
@@ -154,133 +160,81 @@ int main(int argc, char *argv[])
         for (int i = 0; i < FD_SETSIZE; i++) {
             if (FD_ISSET(i, &read_fd_set)) {
                 if (i == parentfd) {
-                    handle_client_request(parentfd, &ai, sock_map, cache, &active_fd_set);
-                    //continues for loop, read through all sockets with ready data
+                    // Set up connection to desired resource, possibly
+                    // forwarding a GET request
+                    handle_client_request(parentfd, &ai, sock_map, cache,
+                                            &active_fd_set);
+                    // Continues inner for loop, read through all sockets with
+                    // ready data
                     continue; 
                 }
                 // Otherwise we are either returning from a server after a GET
-                // request or continuing a CONNECT tunnel, so forward accordingly
+                // request or continuing a CONNECT tunnel, so forward 
+                // packets accordingly
                 else {
                     handle_incoming_message(i, sock_map, cache, &active_fd_set);
                 }
             }
         }
     }
-        //// Check with Cache_get(cache, key_hash) if ya existe an entry
-        //KV_Pair_T response = Cache_get(cache, hash_val);
-        ////  if ya existe:
-        //if (response != NULL) {
-        //    //update Age & write response to client
-        //    send_response(childfd, response);
-        //}
-        //  else get fresh one (set up connxn w/server)
-        //else {
-        //    /* Set up connection using desired host/port */
-        //    char srv_portno[6]; //maximum of 65,535 ports
-        //    memset(srv_portno, 0, 6);
-        //    sprintf(srv_portno, "%d", server_portno); //adds null
-	//    int s = getaddrinfo(extern_hostname, srv_portno, &hints, &result);
-        //    if (s != 0) {
-        //        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
-        //        exit(EXIT_FAILURE);
-        //    }
-        //    /* getaddrinfo() returns a list of address structures.
-        //      Try each address until we successfully connect(2).
-        //      If socket(2) (or connect(2)) fails, we (close the socket
-        //      and) try the next address. */
-        //    for (rp = result; rp != NULL; rp = rp->ai_next) {
-        //        sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        //        if (sockfd == -1)
-        //            continue;
-        //        if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
-        //            break;                  /* Success */
-        //        close(sockfd);
-        //    }
-        //    if (rp == NULL) {               /* No address succeeded */
-        //        fprintf(stderr, "Could not connect during GET\n");
-        //        //TODO don't fail here, restart!
-        //        exit(EXIT_FAILURE);
-        //    }
-        //    freeaddrinfo(result);           /* No longer needed */
-
-        //    //Write the GET request ourselves to the server
-        //    n_write = write(sockfd, buf, total_bytes_read);
-        //    (void)n_write;
-
-        //    /* Now, reading back response from requested server */
-
-        //    //zero out the buffer before reading back from external server
-        //    bzero(buf, total_bytes_read);
-        //    total_bytes_read = prev_newline_index =
-        //            content_length = num_header_bytes = 0;
-        //    done = check_newline = content_present = false;
-        //    // Read until have received entire request
-        //    while (!done) {
-        //        http_receive_loop(sockfd, &buf, &c, &n_read, &total_bytes_read,
-        //                            &curr_bufsize, &prev_newline_index, 
-        //                            &content_length, &num_header_bytes, &done,
-        //                            &content_present);
-        //    } //now, have supposedly received entire HTTP response from server
-
-        //    //create & fill in kvp struct
-        //    KV_Pair_T response = malloc(sizeof(struct KV_Pair_T));
-        //    response->val = malloc(sizeof(struct Val_T));
-
-        //    response->priority = -1;
-        //    response->hash_val = hash_val;
-        //    response->put_date = -1;
-        //    
-        //    parse_response(buf, total_bytes_read, response);
-
-        //    response->put_date = time(NULL);
-
-        //    Cache_put(cache, response);
-        //
-        //    send_response(childfd, response);
-
-        //    close(sockfd);
-        //    //Cache_print(cache);
-        //}
-    //    free(extern_hostname);
-    //    free(buf);
-    //    close(childfd);
-    //}
 
     Cache_free(cache);
 
     return EXIT_SUCCESS;
 }
 
+/*
+ * Handles accepting a new client request on the parent socket, and delegates
+ * work to helper functions accordingly.
+ *
+ * parentfd: parent socket to listen on
+ * ai: pointer to pre-populated accept_info struct
+ * sock_map: integer array, used for keeping track of client-server
+ *           file descriptor pairings
+ * cache: Proxy cache, used to check for extant results of GET requests
+ * fds: fd_set pointer, updated accordingly if connections are successfully
+ *      made
+ *
+ * Returns: None
+ */
 void handle_client_request(int parentfd, accept_info *ai, int *sock_map,
                             Cache_T cache, fd_set *fds)
 {
     int clientfd = accept_new_connection(parentfd, ai);
-    
+    if (clientfd == -1) {
+        fprintf(stderr, "Could not connect to client\n");
+        return;
+    }
+
     /* 
      * read: read input string from the client
      */
     int n_read, total_bytes_read, prev_newline_index, content_length,
-        num_header_bytes;
+        num_header_bytes, ret;
     bool done, check_newline, content_present;
     char c;
     n_read = total_bytes_read = prev_newline_index = content_length 
-        = num_header_bytes = 0;
+        = num_header_bytes = ret = 0;
     done = check_newline = content_present = false;
     char *buf = calloc(START_BUFSIZE, 1);
     int curr_bufsize = START_BUFSIZE;
     // Read until have received entire request
     while (!done) {
-        http_receive_loop(clientfd, &buf, &c, &n_read, &total_bytes_read,
+        ret = http_receive_loop(clientfd, &buf, &c, &n_read, &total_bytes_read,
                             &curr_bufsize, &prev_newline_index, 
                             &content_length, &num_header_bytes, &done,
                             &content_present);
+        if (ret != 0) {
+            check_and_free(buf);
+            close(clientfd);
+            return;
+        }
     }
 #if TRACE
     printf("HTTP_LOOP done, parsing buffer now\n");
 #endif
     int server_portno = -1;
     char *extern_hostname = NULL;
-    int ret = 0;
     unsigned long hash_val = 0;
     ret = parse_request(buf, total_bytes_read,
                         &extern_hostname, &server_portno, &hash_val);
@@ -321,7 +275,7 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map,
     struct addrinfo hints;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC; //IPV4 or IPV6
-    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_socktype = SOCK_STREAM; //tcp stream connections
     // sets flags to (AI_V4MAPPED | AI_ADDRCONFIG),
     // means returned socket addresses will be suitable for connect()
     hints.ai_flags = 0; 
@@ -355,9 +309,9 @@ void handle_client_request(int parentfd, accept_info *ai, int *sock_map,
 }
 
 /*
- * Given a parent socket and accept_info struct, accept()'s a new connection
- * from the parentfd.
- * ai struct should have clientaddr 
+ * Given a parent socket (parentfd) and accept_info struct(ai), accept()'s a
+ * new connection.
+ * On success, returns the new file descriptor. If an error occurs, returns -1.
  */
 int accept_new_connection(int parentfd, accept_info *ai)
 {
@@ -366,9 +320,11 @@ int accept_new_connection(int parentfd, accept_info *ai)
      */
     int childfd = accept(parentfd, (struct sockaddr *) (ai->clientaddr),
                         &(ai->clientlen));
-    if (childfd < 0) 
-        //TODO error another way
-        error("ERROR on accept");
+    if (childfd < 0) {
+        perror("accept");
+        close(childfd);
+        return -1;
+    }
     
     memset(ai->client_hostname, 0, ai->host_size);
     memset(ai->client_servicename, 0, ai->serv_size);
@@ -386,23 +342,39 @@ int accept_new_connection(int parentfd, accept_info *ai)
         if (name_info == EAI_SYSTEM) {
             perror("System Error during getnameinfo()");
         }
-        else
-            gai_strerror(name_info);
+        else {
+            fprintf(stderr, "getnameinfo: %s\n", gai_strerror(name_info));
+        }
+        return -1;
     }
 #if TRACE
-    fprintf(stderr, "getnameinfo returned: %d\n", name_info);
+    printf("getnameinfo returned: %d\n", name_info);
 #endif
-        char *hostaddrp = inet_ntoa(ai->clientaddr->sin_addr);
-        if (hostaddrp == NULL)
-            //TODO error cleanup
-            error("ERROR on inet_ntoa\n");
 #if DEBUG
-        printf("server established connection. Host: %s (%s), service name: %s\n", 
-                ai->client_hostname, hostaddrp, ai->client_servicename);
+    char *hostaddrp = inet_ntoa(ai->clientaddr->sin_addr);
+    if (hostaddrp == NULL) {
+        perror("ERROR on inet_ntoa\n");
+        return -1;
+    }
+    printf("accepted incoming connection from: %s (%s), service name: %s\n", 
+            ai->client_hostname, hostaddrp, ai->client_servicename);
 #endif
-        return childfd;
+    return childfd;
 }
 
+/*
+ * Update the mapping of client-server file descriptors. -1 indicates None.
+ * Once a connection to a server has been established, accessing
+ * sock_map[clientfd] == serverfd,
+ *      and 
+ * sock_map[serverfd] == clientfd
+ * so that CONNECT tunnels can be treated symetrically.
+ *
+ * clientfd: file descriptor of the client
+ * serverfd: file descriptor of the server
+ * sock_map: int *, an int[FD_SETSIZE] array that has been intitialized with
+ *           all -1 values.
+ */
 void add_to_mapping (int clientfd, int serverfd, int *sock_map)
 {
     if ((clientfd < 0 || clientfd > FD_SETSIZE) || 
@@ -456,7 +428,9 @@ int forward_packet(int from_fd, int to_fd, int *sock_map, fd_set *fds)
     return 0;
 }
 
-//TODO replace exits with returns
+/*
+ * 
+ */
 void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *fds)
 {
     if (from_fd < 0 || from_fd > FD_SETSIZE) {
@@ -470,7 +444,7 @@ void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *
     }
     //Check if fd returning from a GET request
     if (!IS_WAITING(to_fd)) {
-        //We must be forwarding some part of a CONNECT tunnel
+        //Not waiting, so we must be forwarding some part of a CONNECT tunnel
         forward_packet(from_fd, to_fd, sock_map, fds);
         return;
     }
@@ -479,20 +453,31 @@ void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *
     unsigned long h = WAITING_HASH(to_fd);
     
     int n_read, total_bytes_read, prev_newline_index, content_length,
-        num_header_bytes;
+        num_header_bytes, ret;
     bool done, check_newline, content_present;
     char c;
     n_read = total_bytes_read = prev_newline_index = content_length 
-        = num_header_bytes = 0;
+        = num_header_bytes = ret = 0;
     done = check_newline = content_present = false;
     char *buf = calloc(START_BUFSIZE, 1);
     int curr_bufsize = START_BUFSIZE;
     // Read until have received entire request
     while (!done) {
-        http_receive_loop(from_fd, &buf, &c, &n_read, &total_bytes_read,
+        ret = http_receive_loop(from_fd, &buf, &c, &n_read, &total_bytes_read,
                             &curr_bufsize, &prev_newline_index, 
                             &content_length, &num_header_bytes, &done,
                             &content_present);
+        if (ret != 0) {
+            free(buf);
+            close(to_fd);
+            close(from_fd);
+            sock_map[to_fd] = -1;
+            sock_map[from_fd] = -1;
+            REMOVE_WAITING(to_fd);
+            FD_CLR(from_fd, fds);
+            FD_CLR(to_fd, fds);
+            return;
+        }
     } //now, have supposedly received entire HTTP response from server
 
     //create & fill in kvp struct
@@ -503,16 +488,29 @@ void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *
     response->hash_val = h;
     response->put_date = -1;
     
-    parse_response(buf, total_bytes_read, response);
+    // parse response buffer from server
+    ret = parse_response(buf, total_bytes_read, response);
 
-    response->put_date = time(NULL);
+    if (ret == 0) { 
+        // Successfully parsed, so add to cache
+        // and forward to client
+        response->put_date = time(NULL);
 
-    Cache_put(cache, response);
+        Cache_put(cache, response);
 
-    send_response(to_fd, response);
+        send_response(to_fd, response);
+    }
+    else {
+        //Error, so free key-value pair before returning
+#if DEBUG
+        printf("Error in response from server:%s\n", buf);
+#endif
+        check_and_free(response->val->object);
+        check_and_free(response->val);
+        check_and_free(response);
+    }
 
-    //TODO respect Connection: Keep-Alive headers and don't close sockets?
-    //might complicate things a LOT
+    free(buf);
     close(to_fd);
     close(from_fd);
     sock_map[to_fd] = -1;
@@ -520,6 +518,5 @@ void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *
     REMOVE_WAITING(to_fd);
     FD_CLR(from_fd, fds);
     FD_CLR(to_fd, fds);
-    //Cache_print(cache);
     return;
 }

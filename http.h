@@ -19,11 +19,11 @@ typedef struct connect_info {
 int parse_request(char *buf, int len, char **hostname, int *portno,
                     unsigned long *hash_val);
 
-void parse_response(char *buf, int size, KV_Pair_T kvp);
+int parse_response(char *buf, int size, KV_Pair_T kvp);
 
 int send_response(int sockfd, KV_Pair_T response);
 
-void http_receive_loop(int childfd, char **buf, char *c, int *n_read,
+int http_receive_loop(int childfd, char **buf, char *c, int *n_read,
                         int *total_bytes_read, int *curr_bufsize,
                         int *prev_newline_index, int *content_length,
                         int *num_header_bytes, bool *done,
