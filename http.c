@@ -23,6 +23,7 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
     int major, minor; //HTTP version
     char tokens[len];
     char *line, *resource;
+    bool head_rq = false;
     memcpy(tokens, buf, len); //create copy bc strtok edits the string
 
     //split into tokens based on newlines
@@ -32,7 +33,10 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
     //***NOTE***: only bother scanning until \r bc strtok replaces \n with \0
     // Also, "resource" var here has null char placed @ end by sscanf
     if (sscanf(line, "GET %s HTTP/%d.%d\r", resource, &major, &minor) != 3) {
-        if (sscanf(line, "CONNECT %s HTTP/%d.%d\r", resource, &major, &minor) == 3) {
+        if (sscanf(line, "HEAD %s HTTP/%d.%d\r", resource, &major, &minor) == 3) {
+            head_rq = true;
+        }
+        else if (sscanf(line, "CONNECT %s HTTP/%d.%d\r", resource, &major, &minor) == 3) {
             ret = 1;
         }
         else {
@@ -71,7 +75,7 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
 #if TRACE
     char *type;
     if (ret == 1) type = "CONNECT";
-    else if (ret == 0) type = "GET";
+    else if (ret == 0) type = "GET/HEAD";
     else type = "UNKOWN";
     printf("parsed %s request: %s\n", type, buf);
     if (*hostname != NULL)
@@ -90,15 +94,32 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
         }
         sprintf(ascii_portno, "%d", *portno); //adds null
         to_hash_len += strlen(ascii_portno);
+
+        //add string at beginning to differentiate between HEAD/GET responses
+        if (head_rq) {
+            to_hash_len += 4; //"HEAD"
+        } else {
+            to_hash_len += 3; //"GET"
+        }
+
+        //Order of hashed string: "HEAD" or "GET", resource, hostname, port num
         char to_hash[to_hash_len];
-        //Order of hashed string: resource, hostname, port num     
+        int method_len;
+        if (head_rq) {
+            memcpy(to_hash, "HEAD", 4);
+            method_len = 4;
+        } else {
+            memcpy(to_hash, "GET", 3);
+            method_len = 3;
+        }
+
         // resource
-        memcpy(to_hash, resource, strlen(resource));
+        memcpy(to_hash+method_len, resource, strlen(resource));
         if (*hostname != NULL) {
             // hostname
-            memcpy(to_hash+(strlen(resource)), *hostname, strlen(*hostname));
+            memcpy(to_hash+(method_len+strlen(resource)), *hostname, strlen(*hostname));
             // portno
-            memcpy(to_hash+(strlen(resource)+strlen(*hostname)-1),
+            memcpy(to_hash+(method_len+strlen(resource)+strlen(*hostname)-1),
                     ascii_portno, strlen(ascii_portno));
         }
         *hash_val = hash((unsigned char *)to_hash, to_hash_len);
@@ -257,7 +278,8 @@ int http_receive_loop(int childfd, char **buf, char *c, int *n_read,
                         bool *content_present)
 {
     //Read a byte from stream
-    *n_read = read(childfd, (*buf)+(*total_bytes_read), 1);
+    //*n_read = read(childfd, (*buf)+(*total_bytes_read), 1);
+    *n_read = recv(childfd, (*buf)+(*total_bytes_read), 1, 0);
     if (*n_read < 0) {
         perror("http_receive_loop");
         return -1;

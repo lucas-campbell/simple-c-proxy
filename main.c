@@ -329,7 +329,7 @@ int accept_new_connection(int parentfd, accept_info *ai)
     memset(ai->client_hostname, 0, ai->host_size);
     memset(ai->client_servicename, 0, ai->serv_size);
 #if TRACE
-    fprintf(stderr, "Before getnameinfo\n");
+    printf("Before getnameinfo\n");
 #endif
     /* 
      * getnameinfo: determine who sent the message, fills in clientaddr struct
@@ -377,8 +377,8 @@ int accept_new_connection(int parentfd, accept_info *ai)
  */
 void add_to_mapping (int clientfd, int serverfd, int *sock_map)
 {
-    if ((clientfd < 0 || clientfd > FD_SETSIZE) || 
-            (serverfd < 0 || serverfd > FD_SETSIZE))
+    if ((clientfd < 0 || clientfd >= FD_SETSIZE) || 
+            (serverfd < 0 || serverfd >= FD_SETSIZE))
     {
         fprintf(stderr, "Error adding to socket mappings\n");
         exit(EXIT_FAILURE);
@@ -401,7 +401,8 @@ int forward_packet(int from_fd, int to_fd, int *sock_map, fd_set *fds)
     char buf[PACKET_SIZE];
     memset(buf, 0, PACKET_SIZE);
     //read from waiting socket
-    int n_read = read(from_fd, buf, PACKET_SIZE);
+    //int n_read = read(from_fd, buf, PACKET_SIZE);
+    int n_read = recv(from_fd, buf, PACKET_SIZE, 0);
     if (n_read == -1) {
         perror("Reading from socket");
         return -1;
@@ -433,19 +434,27 @@ int forward_packet(int from_fd, int to_fd, int *sock_map, fd_set *fds)
  */
 void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *fds)
 {
-    if (from_fd < 0 || from_fd > FD_SETSIZE) {
+    if (from_fd < 0 || from_fd >= FD_SETSIZE) {
         fprintf(stderr, "Error handling incoming message\n");
         exit(EXIT_FAILURE);
     }
     int to_fd = sock_map[from_fd];
-    if (to_fd == -1) {
+    if ((to_fd == -1) || sock_map[to_fd] != from_fd) {
         fprintf(stderr, "Error with socket mappings\n");
         exit(EXIT_FAILURE);
     }
     //Check if fd returning from a GET request
     if (!IS_WAITING(to_fd)) {
         //Not waiting, so we must be forwarding some part of a CONNECT tunnel
-        forward_packet(from_fd, to_fd, sock_map, fds);
+        if (forward_packet(from_fd, to_fd, sock_map, fds) != 0)
+        {
+            close(to_fd);
+            close(from_fd);
+            sock_map[to_fd] = -1;
+            sock_map[from_fd] = -1;
+            FD_CLR(from_fd, fds);
+            FD_CLR(to_fd, fds);
+        }
         return;
     }
 
