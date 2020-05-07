@@ -166,13 +166,15 @@ int main(int argc, char *argv[])
                                             &active_fd_set);
                     // Continues inner for loop, read through all sockets with
                     // ready data
-                    continue; 
+                    //continue; 
+                    break; 
                 }
                 // Otherwise we are either returning from a server after a GET
                 // request or continuing a CONNECT tunnel, so forward 
                 // packets accordingly
                 else {
                     handle_incoming_message(i, sock_map, cache, &active_fd_set);
+                    break;
                 }
             }
         }
