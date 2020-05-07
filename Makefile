@@ -11,7 +11,7 @@ INCLUDES = $(shell echo *.h)
 # rest of the word
 C_TEST_FILES = $(shell echo test* | sed -E "s/([^\.]*)(\.*)([^\ ]*)\b/\1/g") 
 
-EXECUTABLES = proxy tcpserver tcpclient 
+EXECUTABLES = proxy
 
 all: $(EXECUTABLES) $(C_TEST_FILES)
 
@@ -29,12 +29,6 @@ trace: proxy
 
 proxy: main.o utils.o cache.o http.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
-
-tcpserver: tcpserver.o
-	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
-
-tcpclient: tcpclient.o
-	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
 # $^ is a space-separated list of the prerequisites (names after the colon),
 # with duplicates removed

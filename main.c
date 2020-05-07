@@ -421,8 +421,9 @@ int forward_packet(int from_fd, int to_fd, int *sock_map, fd_set *fds)
         FD_CLR(to_fd, fds);
         return 0;
     }
-    int n_write = write(to_fd, buf, n_read);
-    if (n_write == -1) {
+    //int n_write = write(to_fd, buf, n_read);
+    int n_write = send(to_fd, buf, n_read, MSG_NOSIGNAL);
+    if (n_write < 0) {
         perror("Forwarding packet");
         return -2;
     }

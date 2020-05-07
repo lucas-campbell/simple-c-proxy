@@ -254,8 +254,9 @@ int send_response(int sockfd, KV_Pair_T response)
                 to_send+header_size, content_len);
     }
 
-    ssize_t n_write = write(sockfd, msg, header_size+content_len+strlen(ascii_age));
-    if (n_write != header_size+content_len+(int)strlen(ascii_age)) {
+    //ssize_t n_write = write(sockfd, msg, header_size+content_len+strlen(ascii_age));
+    ssize_t n_write = send(sockfd, msg, header_size+content_len+strlen(ascii_age), MSG_NOSIGNAL);
+    if (n_write < 0) {
         fprintf(stderr, "Error writing response to client\n");
     }
     free(msg);
@@ -406,8 +407,9 @@ int connect_to_server(int clientfd, struct connect_info *ci)
         char *success = "HTTP/1.1 200 OK\r\n\r\n";
         memcpy(msg_buf, success, strlen(success));
         msg_buf[strlen(success)] = '\0';
-        n_write = write(clientfd, msg_buf, strlen(msg_buf));
-        if (n_write == -1) {
+        //n_write = write(clientfd, msg_buf, strlen(msg_buf));
+        n_write = send(clientfd, msg_buf, strlen(msg_buf), MSG_NOSIGNAL);
+        if (n_write < 0) {
             perror("Writing to client failed:");
             free(msg_buf);
             close(serverfd);
@@ -417,7 +419,8 @@ int connect_to_server(int clientfd, struct connect_info *ci)
         free(msg_buf);
     }
     else {
-        n_write = write(serverfd, ci->the_request, ci->request_len);
+        //n_write = write(serverfd, ci->the_request, ci->request_len);
+        n_write = send(serverfd, ci->the_request, ci->request_len, MSG_NOSIGNAL);
         if (n_write == -1) {
             perror("Writing GET request to server");
             close(serverfd);
