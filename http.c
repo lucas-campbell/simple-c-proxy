@@ -234,7 +234,8 @@ int send_response(int sockfd, KV_Pair_T response)
     char *to_send = (char *)(response->val->object); 
      
     /* Message to finally send to server */
-    char msg[header_size + content_len + strlen(ascii_age)];
+    //char msg[header_size + content_len + strlen(ascii_age)];
+    char *msg = calloc(header_size + content_len + strlen(ascii_age), 1);
 
     /*
      * Order: OG Header(s) - extra CRLF, added Age header+ending CRLF,
@@ -257,6 +258,7 @@ int send_response(int sockfd, KV_Pair_T response)
     if (n_write != header_size+content_len+(int)strlen(ascii_age)) {
         fprintf(stderr, "Error writing response to client\n");
     }
+    free(msg);
     return n_write;
 }
 
