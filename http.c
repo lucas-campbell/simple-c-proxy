@@ -159,7 +159,7 @@ int parse_response(char *buf, int size, KV_Pair_T kvp)
         return -1;
     }
 
-    if (sscanf(line, "HTTP/%d.%d %d %s\r\n", &major, &minor, &response_code,
+    if (sscanf(line, "HTTP/%d.%d %d %s\r", &major, &minor, &response_code,
                 reason) != 4) {
 #if DEBUG
         printf("Error with first line of HTTP response\n%s\n", buf);
