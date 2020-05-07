@@ -1,9 +1,0 @@
-Would/will implement with more time:
-
-- add logic in parse_request() to differentiate btwn absolute and authority
-    forms of the URI (According to RFC 7230#Host, when a proxy receives the
-    absolute-form it is supposed to ignore the Host header and just parse the
-    URI for the host (and then replace the Host header). Also, make sure that
-    all CONNECT request honly have the authorit-form of the URI
-    
--  Handle chunked encoding?
