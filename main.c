@@ -441,6 +441,9 @@ void handle_incoming_message(int from_fd, int *sock_map, Cache_T cache, fd_set *
     int to_fd = sock_map[from_fd];
     if ((to_fd == -1) || sock_map[to_fd] != from_fd) {
         fprintf(stderr, "Error with socket mappings\n");
+#if DEBUG
+        fprintf(stderr, "from_fd: %d\nto_fd %d\n", from_fd, to_fd);
+#endif
         exit(EXIT_FAILURE);
     }
     //Check if fd returning from a GET request

@@ -21,13 +21,17 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
 {
     int ret = 0;
     int major, minor; //HTTP version
-    char tokens[len];
+    char *tokens = calloc(len+1, 1); //+1 for possible final strtok null
     char *line, *resource;
     bool head_rq = false;
     memcpy(tokens, buf, len); //create copy bc strtok edits the string
 
     //split into tokens based on newlines
     line = strtok(tokens, "\n");
+    if (line == NULL) {
+        free(tokens);
+        return -1;
+    }
     resource = malloc(strlen(line));
 
     //***NOTE***: only bother scanning until \r bc strtok replaces \n with \0
@@ -126,7 +130,7 @@ int parse_request(char *buf, int len, char **hostname, int *portno,
     }
 
     check_and_free(resource);
-
+    free(tokens);
     return ret;
 }
 
@@ -145,17 +149,22 @@ int parse_response(char *buf, int size, KV_Pair_T kvp)
     max_age = -1;
     char * line = NULL;
     char reason[100];
-    char tokens[size];
+    char *tokens = calloc(size+1, 1); //+1 for possible final strtok null
 
     memcpy(tokens, buf, size);
     //split into tokens based on newlines
     line = strtok(tokens, "\n");
+    if (line == NULL) {
+        free(tokens);
+        return -1;
+    }
 
     if (sscanf(line, "HTTP/%d.%d %d %s\r\n", &major, &minor, &response_code,
                 reason) != 4) {
 #if DEBUG
         printf("Error with first line of HTTP response\n%s\n", buf);
 #endif
+        free(tokens);
         return -1;
     }
     bool got_age, got_len;
@@ -171,10 +180,11 @@ int parse_response(char *buf, int size, KV_Pair_T kvp)
                 got_age = true;
             }
         }
-        if (!got_len)
-            if (sscanf(line, "Content-Length: %d\r\n", &content_length) == 1) {
+        if (!got_len) {
+            if (sscanf(line, "Content-Length: %d\r", &content_length) == 1) {
                 got_len = true;
             }
+        }
         if (got_len && got_age)
             break;
         line = strtok(NULL, "\n");
@@ -190,6 +200,7 @@ int parse_response(char *buf, int size, KV_Pair_T kvp)
     kvp->val->header_size = size - content_length;
     kvp->val->object = malloc(size);
     memcpy(kvp->val->object, buf, size);
+    free(tokens);
     return 0;
 }
 
@@ -284,17 +295,18 @@ int http_receive_loop(int childfd, char **buf, char *c, int *n_read,
         perror("http_receive_loop");
         return -1;
     }
-    *total_bytes_read += *n_read; 
-    *c = (*buf)[(*total_bytes_read)-1];
     if (*n_read == 0) {
         *done = true;
         (*buf)[*total_bytes_read] = '\0';
         return 0;
     }
+    *total_bytes_read += *n_read; 
+    *c = (*buf)[(*total_bytes_read)-1];
     // May need to expand buffer if especially long GET request
     if (*total_bytes_read == *curr_bufsize) {
         *curr_bufsize = 2*(*curr_bufsize);
         *buf = realloc(*buf, *curr_bufsize);
+        memset((*buf)+(*total_bytes_read), 0, (*total_bytes_read));
     }
     if (*c == '\n') {
         //check if we have run into 2 CRLFs in a row
